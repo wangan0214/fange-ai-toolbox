@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>帆哥PPT编辑器</title>
+<style>
+  :root{
+    /* 编辑器 UI 用 --ui-* 前缀，避免被 injectOrigCss 注入的 #editor-override-css 兜底 :root 覆盖（它会污染 --panel/--line/--muted） */
+    --ui-bg:#0d0d0f; --ui-panel:#1c1c22; --ui-line:#3d3d48; --ui-text:#eef0f3;
+    --ui-muted:#9ea0a8; --red:#ff3300; --red-hover:#ff4520; --green:#22c55e;
+    --ui-btn-bg:#26262f; --ui-btn-hover:#33333e;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--ui-bg);color:var(--ui-text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  /* 顶栏 */
+  #topbar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--ui-panel);
+    border-bottom:1px solid var(--ui-line);position:sticky;top:0;z-index:20;}
+  #topbar h1{font-size:15px;margin:0 6px 0 0;font-weight:700;letter-spacing:.3px;white-space:nowrap;flex:none;}
+  #topbar h1 .accent{color:var(--red);}
+  #topbar .spacer{flex:1;}
+  .btn{border:1px solid var(--ui-line);background:var(--ui-btn-bg);color:var(--ui-text);padding:8px 14px;
+    border-radius:8px;font-size:13px;cursor:pointer;transition:.15s;font-weight:500;white-space:nowrap;
+    box-shadow:0 1px 0 rgba(255,255,255,0.04) inset;}
+  .btn:hover{border-color:var(--red);background:var(--ui-btn-hover);color:#fff;}
+  .btn:active{transform:translateY(1px);}
+  .btn.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
+  .btn.primary:hover{background:var(--red-hover);border-color:var(--red-hover);color:#fff;}
+  .btn.ghost{background:rgba(255,255,255,0.05);border-color:#4a4a56;}
+  .btn.ghost:hover{background:rgba(255,255,255,0.10);border-color:var(--red);}
+  #status{font-size:12px;color:var(--ui-muted);min-width:220px;text-align:right;}
+  #status.ok{color:var(--green);}
+  #status.err{color:var(--red);}
+
+  /* 布局 */
+  #main{display:flex;height:calc(100% - 53px);}
+  #side{width:200px;background:var(--ui-panel);border-right:1px solid var(--ui-line);
+    overflow:auto;padding:10px 0;flex:none;}
+  #side .s-item{display:flex;align-items:center;gap:6px;padding:9px 12px;font-size:13px;color:var(--ui-muted);cursor:pointer;
+    border-left:3px solid transparent;}
+  #side .s-item:hover{background:#1d1d22;color:var(--ui-text);}
+  #side .s-item.active{color:var(--ui-text);border-left-color:var(--red);background:#1d1d22;}
+  #side .s-item .pg{display:inline-block;min-width:26px;color:var(--red);font-weight:700;flex:none;}
+  #side .s-item .stitle{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #side .s-item .mv{display:flex;flex-direction:column;gap:2px;flex:none;opacity:0;transition:.15s;}
+  #side .s-item:hover .mv{opacity:1;}
+  #side .s-item .mv button{border:none;background:#2a2a30;color:var(--ui-muted);font-size:9px;line-height:1;
+    width:18px;height:13px;padding:0;cursor:pointer;border-radius:3px;}
+  #side .s-item .mv button:hover:not(:disabled){background:var(--red);color:#fff;}
+  #side .s-item .mv button:disabled{opacity:.25;cursor:not-allowed;}
+
+  #editor{flex:1;overflow:auto;padding:24px;background:#0a0a0c;}
+  /* 默认缩略图模式：所有 slide 以 0.5x (960×540) 缩略排列，能看到全部 26 张 + 各自底色/网格 */
+  .slide-wrap{margin:0 auto 26px;max-width:980px;}
+  .slide-label{font-size:12px;color:var(--ui-muted);margin:0 0 6px 4px;}
+  .slide-label .pg{color:var(--red);font-weight:700;}
+  .slide-frame{width:960px;height:540px;overflow:hidden;position:relative;
+    border:1px solid var(--ui-line);border-radius:6px;background:#000;
+    margin:0 auto;box-shadow:0 6px 24px rgba(0,0,0,.4);}
+  .slide-frame:focus-within{border-color:var(--red);}
+  .slide-frame .slide{position:absolute!important;top:0!important;left:0!important;
+    transform:scale(.5)!important;transform-origin:top left!important;
+    width:1920px!important;height:1080px!important;opacity:1!important;
+    visibility:visible!important;display:block!important;}
+
+  /* 放大编辑模式：被 .zoomed 包裹的 slide 临时 1:1 原尺寸渲染，方便精确改字 */
+  body.edit-mode .slide-wrap:not(.zoomed) .slide-frame{height:0;margin-top:-14px;border-color:transparent;box-shadow:none;}
+  body.edit-mode .slide-wrap:not(.zoomed){margin-bottom:0;}
+  body.edit-mode .slide-wrap:not(.zoomed) .slide-label{visibility:hidden;}
+  .slide-wrap.zoomed .slide-frame{width:1920px;height:1080px;}
+  .slide-wrap.zoomed .slide-frame .slide{transform:none!important;}
+
+  /* 草稿恢复横幅 */
+  #banner{display:none;position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    background:#1f1f25;border:1px solid var(--ui-line);padding:12px 16px;border-radius:10px;
+    font-size:13px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.5);align-items:center;gap:12px;}
+  #banner .btn{padding:6px 12px;}
+
+  /* 进度条 */
+  #progress{display:none;position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    width:360px;background:#1f1f25;border:1px solid var(--ui-line);padding:14px 16px 12px;border-radius:10px;
+    font-size:13px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.5);}
+  #progress .bar{height:8px;background:#2a2a30;border-radius:4px;margin-top:8px;overflow:hidden;}
+  #progress .bar i{display:block;height:100%;width:0;background:var(--red);transition:width .3s;}
+  #progress .ptxt{color:var(--ui-muted);margin-top:6px;}
+  #progress .prog-close{position:absolute;top:6px;right:8px;width:24px;height:24px;border:none;background:transparent;color:var(--ui-muted);font-size:18px;cursor:pointer;line-height:1;border-radius:4px;}
+  #progress .prog-close:hover{color:var(--red);background:#26262e;}
+  #progress .prog-cancel{margin-top:8px;padding:5px 12px;background:transparent;border:1px solid var(--ui-line);color:var(--ui-muted);border-radius:6px;font-size:12px;cursor:pointer;transition:.15s;}
+  #progress .prog-cancel:hover:not(:disabled){border-color:var(--red);color:var(--red);}
+  #progress .prog-cancel:disabled{opacity:.4;cursor:not-allowed;}
+
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-thumb{background:#333;border-radius:5px;}
+
+  /* 文件选择器 */
+  #file-select{max-width:240px;background:var(--ui-btn-bg);color:var(--ui-text);border-color:var(--ui-line);}
+  #file-select:hover{border-color:var(--red);}
+  #file-select option{background:var(--ui-btn-bg);color:var(--ui-text);}
+  /* 拖拽导入：编辑区整块作为接收区 */
+  #editor.drag-target{outline:3px dashed var(--green);outline-offset:-12px;background:#0f1a14;}
+  #drop-hint{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+    background:rgba(34,197,94,0.92);color:#0a1a0a;padding:18px 28px;border-radius:12px;
+    font-size:15px;font-weight:600;z-index:100;box-shadow:0 12px 40px rgba(0,0,0,.5);pointer-events:none;}
+  #drop-hint.on{display:block;}
+  /* 侧栏项可拖拽（拖拽排序） */
+  #side .s-item[draggable="true"]{cursor:grab;}
+  #side .s-item.drag-over{border-left-color:var(--green)!important;background:#1d2a1d;}
+  #side .s-item.dragging{opacity:.4;}
+  /* 历史弹窗 */
+  #history-modal .h-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--ui-line);font-size:13px;}
+  #history-modal .h-row .h-ts{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #history-modal .h-row .h-sz{color:var(--ui-muted);}
+</style>
+<!-- 源文件样式（由 JS 注入，仅用于编辑器内预览，不写回文件） -->
+<style id="orig-css"></style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>帆哥<span class="accent">PPT</span>编辑器</h1>
+  <select id="file-select" class="btn ghost" title="切换要编辑的片子（工作目录内的 HTML）"></select>
+  <button class="btn ghost" id="btn-open" title="打开本地 .html 文件（也可直接拖拽到编辑区）">打开文件</button>
+  <input type="file" id="file-input" accept=".html,text/html" style="display:none">
+  <button class="btn primary" id="btn-save">保存（⌘S）</button>
+  <button class="btn" id="btn-save-render">保存并渲染</button>
+  <button class="btn ghost" id="btn-render">仅重新渲染</button>
+  <button class="btn ghost" id="btn-zoom">放大编辑当前页</button>
+  <button class="btn ghost" id="btn-export">导出 HTML</button>
+  <button class="btn" id="btn-export-pptx">导出 PPT</button>
+  <button class="btn ghost" id="btn-history">历史</button>
+  <button class="btn ghost" id="btn-reload">放弃改动重读</button>
+  <div class="spacer"></div>
+  <div id="status">就绪</div>
+</div>
+
+<div id="main">
+  <div id="side"></div>
+  <div id="editor"></div>
+</div>
+
+<div id="banner">
+  <span>浏览器里有一份<b>未保存</b>的草稿（可能比磁盘旧）。编辑器已显示<b>磁盘最新版本</b>——忽略此提示即继续使用磁盘版；只有点「恢复草稿」才会用旧草稿覆盖。</span>
+  <button class="btn primary" id="bn-discard">忽略，用磁盘最新版</button>
+  <button class="btn ghost" id="bn-restore">恢复草稿（覆盖）</button>
+</div>
+
+<div id="progress">
+  <button class="prog-close" id="prog-close" title="隐藏（不打断渲染，渲染继续在后台跑）">×</button>
+  <div id="p-title">渲染中…</div>
+  <div class="bar"><i id="p-fill"></i></div>
+  <div class="ptxt" id="p-txt"></div>
+  <button class="prog-cancel" id="prog-cancel">停止渲染</button>
+</div>
+
+<div id="drop-hint">松开导入 .html</div>
+
+<div id="history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:580px;max-height:82vh;overflow:auto;background:var(--ui-panel);border:1px solid var(--ui-line);border-radius:12px;padding:18px;">
+    <div style="display:flex;align-items:center;margin-bottom:6px;">
+      <h3 style="margin:0;font-size:15px;">历史保存记录</h3>
+      <div style="flex:1;"></div>
+      <button class="btn ghost" id="hist-close" style="padding:4px 10px;">关闭</button>
+    </div>
+    <p style="font-size:12px;color:var(--ui-muted);margin:0 0 12px;line-height:1.6;">每次「保存」自动留一份带时间戳的快照。点「回滚」可恢复到该版本（回滚前会自动再保留当前版本，永可再退）；「预览」在新标签打开该版本（可播放查看），「下载」存为本地 .html。</p>
+    <div id="hist-list"></div>
+  </div>
+</div>
+
+<script>
+const LS_KEY = "fde_editor_draft_v1";
+const DEFAULT_FILE = "FDE认知片子-瑞士现代-v2.html";
+let currentFile = DEFAULT_FILE;  // 当前编辑的文件（相对 ALLOWED_ROOT 的路径）
+let origDoc = null, origSlides = [], editedSlides = [], slideCount = 0;
+let dirty = false;  // 是否有相对磁盘的未保存改动（仅 dirty 时才写草稿，避免每次刷新都弹草稿横幅）
+let currentIndex = -1;  // 当前选中页索引（侧栏 active）
+let dragFrom = -1;  // 拖拽排序的源显示位置
+let RAW = "";  // 源文件原文，保存时只替换每个 slide 内部内容，其余（head/deck脚本/注释）一字不动
+// 重排序：order[显示位置dp] = 原始索引（RAW 中 <section> 的顺序）。editedSlides/sideItems/wrapEls 均按显示位置索引。
+let order = [], sideItems = [], wrapEls = [];
+
+const $ = (s) => document.querySelector(s);
+const statusEl = $("#status");
+function setStatus(msg, cls){ statusEl.textContent = msg; statusEl.className = cls || ""; }
+
+// 收集源文件 <head> 里的 style / 外链样式（不含脚本），注入编辑器预览
+function injectOrigCss(doc){
+  const parts = [];
+  doc.querySelectorAll('head style, head link[rel="stylesheet"]').forEach(el=>{
+    parts.push(el.outerHTML);
+  });
+  // 源 CSS 塞进 #orig-css（grid 能显示证明这条路径有效）。
+  $("#orig-css").innerHTML = parts.join("\n");
+  // Override 改用独立 <style> 直接挂到 head，避开 <style> innerHTML 嵌套解析的不确定性
+  // ——保证 .reveal 兜底强制可见，与给 slide 加 .visible 双保险。
+  let ov = document.getElementById("editor-override-css");
+  if(!ov){
+    ov = document.createElement("style");
+    ov.id = "editor-override-css";
+    document.head.appendChild(ov);
+  }
+  ov.textContent = `
+    /* 兜底 CSS 变量：源 :root 在 #orig-css 注入，但某些情况下 var(--accent) 仍解析异常，
+       这里再强制一次 + 兜底白底，确保跟 deck 真实渲染色值一致 */
+    :root{--slide-bg:#ffffff;--ink:#0a0a0a;--accent:#ff3300;--muted:#6b6b6b;--panel:#f4f4f2;--line:rgba(0,0,0,0.06);}
+    .reveal{opacity:1!important;transform:none!important;transition:none!important;}
+    .slide,.slide.active,.slide.visible{visibility:visible!important;opacity:1!important;pointer-events:auto!important;z-index:1!important;}
+    /* 强制 slide 实心底色 + 网格压淡，跟 deck 真实渲染一致 */
+    .slide{background:#ffffff!important;}
+    .grid-lines{opacity:0.4!important;}
+    /* 文本兜底：headline/kicker 全部走 var(--ink)/var(--accent)，变体颜色用 !important 锁定 */
+    .kicker{color:var(--accent,#ff3300)!important;opacity:1!important;}
+    .headline{color:var(--ink,#0a0a0a)!important;opacity:1!important;}
+    .chrome .brand{color:var(--ink,#0a0a0a)!important;opacity:1!important;}
+    /* reveal 子元素的 opacity 也全部强制 1（防嵌套 .reveal 仍 opacity:0） */
+    .slide .reveal,.slide .reveal *{opacity:1!important;}
+  `;
+}
+
+// 构建编辑器（doc 为已解析的源文档）
+function buildEditor(doc){
+  origDoc = doc;
+  origSlides = [...doc.querySelectorAll('.slide')];
+  slideCount = origSlides.length;
+  injectOrigCss(doc);
+
+  const editor = $("#editor");
+  editor.innerHTML = "";
+  const side = $("#side");
+  side.innerHTML = "";
+  editedSlides = [];
+  sideItems = [];
+  wrapEls = [];
+  order = [...Array(slideCount).keys()];  // 初始：显示顺序 = 原始顺序
+
+  origSlides.forEach((slide, i)=>{
+    // 侧栏
+    const item = document.createElement("div");
+    item.className = "s-item";
+    item.dataset.dp = i;  // 显示位置（重排后会更新）
+    item.setAttribute("draggable", "true");  // 支持拖拽排序
+    const pg = slide.getAttribute("data-page") || (i+1);
+    item.innerHTML =
+      `<span class="pg">${String(i+1).padStart(2,'0')}</span>` +
+      `<span class="stitle">${pg}</span>` +
+      `<span class="mv">` +
+        `<button class="mv-up" title="上移">▲</button>` +
+        `<button class="mv-down" title="下移">▼</button>` +
+      `</span>`;
+    const wrapRef = () => wrapEls[parseInt(item.dataset.dp, 10)];
+    item.addEventListener("click", ()=>{
+      const dp = parseInt(item.dataset.dp, 10);
+      document.querySelectorAll(".s-item").forEach(x=>x.classList.remove("active"));
+      item.classList.add("active");
+      currentIndex = dp;
+      const w = wrapRef();
+      if(document.body.classList.contains("edit-mode")){
+        applyZoom(dp);
+      } else if(w){
+        w.scrollIntoView({behavior:"smooth", block:"center"});
+      }
+    });
+    item.querySelector(".mv-up").addEventListener("click", (e)=>{
+      e.stopPropagation();
+      moveSlide(parseInt(item.dataset.dp, 10), -1);
+    });
+    item.querySelector(".mv-down").addEventListener("click", (e)=>{
+      e.stopPropagation();
+      moveSlide(parseInt(item.dataset.dp, 10), +1);
+    });
+    // 拖拽排序
+    item.addEventListener("dragstart", (e)=>{
+      dragFrom = parseInt(item.dataset.dp, 10);
+      item.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", String(dragFrom)); } catch(_){}
+    });
+    item.addEventListener("dragend", ()=>{
+      item.classList.remove("dragging");
+      document.querySelectorAll(".s-item.drag-over").forEach(x=>x.classList.remove("drag-over"));
+    });
+    item.addEventListener("dragover", (e)=>{
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      item.classList.add("drag-over");
+    });
+    item.addEventListener("dragleave", ()=> item.classList.remove("drag-over"));
+    item.addEventListener("drop", (e)=>{
+      e.preventDefault();
+      item.classList.remove("drag-over");
+      const to = parseInt(item.dataset.dp, 10);
+      moveTo(dragFrom, to);
+    });
+    side.appendChild(item);
+    sideItems.push(item);
+
+    // 编辑区
+    const wrap = document.createElement("div");
+    wrap.className = "slide-wrap";
+    const label = document.createElement("div");
+    label.className = "slide-label";
+    label.innerHTML = `第 <span class="pg">${i+1}</span> 页 · ${pg}`;
+    const frame = document.createElement("div");
+    frame.className = "slide-frame";
+    const clone = slide.cloneNode(true);
+    clone.classList.add("active","visible");
+    clone.setAttribute("contenteditable", "true");
+    // 源 CSS 要求父 slide 带 .visible 才让 .reveal 显示（.slide.visible .reveal{opacity:1}），
+    // 所以必须给 clone 加 .visible。这是 grid 能显示、文字不显示的根因——grid-lines 没 .reveal 类不受影响。
+    // deck 默认 .reveal 全 opacity:0（等滚动加 .visible 才显示），编辑器不滚动所以主动加上
+    clone.querySelectorAll('.reveal').forEach(el=>el.classList.add('visible'));
+    clone.addEventListener("focus", ()=>{
+      const dp = parseInt(item.dataset.dp, 10);
+      document.querySelectorAll(".s-item").forEach(x=>x.classList.remove("active"));
+      if(sideItems[dp]) sideItems[dp].classList.add("active");
+    });
+    frame.appendChild(clone);
+    wrap.appendChild(label);
+    wrap.appendChild(frame);
+    editor.appendChild(wrap);
+    editedSlides.push(clone);
+    wrapEls.push(wrap);
+  });
+  // 初始：首/末张禁用对应方向按钮（不在此处改写 chrome 页码，保持首次加载对源文件零改动）
+  sideItems.forEach((it, dp)=>{
+    const up = it.querySelector(".mv-up");
+    const down = it.querySelector(".mv-down");
+    if(up) up.disabled = (dp === 0);
+    if(down) down.disabled = (dp === sideItems.length - 1);
+  });
+}
+
+// 序列化（安全版）：保留源文件原文 RAW 的非 slide 部分（head / deck 脚本 / 外层标签），
+// 仅把 <section class="slide"> 块按【当前显示顺序 order】重组，每块内部内容替换为用户改后的 innerHTML。
+// 每个 section 前导的「<!-- ==== Pxx ==== -->」注释随块一起移动，保持源码标注不丢。
+function buildHtml(){
+  const unitRe = /(<!--[\s\S]*?-->)?\s*(<section class="slide"[^>]*>)([\s\S]*?)(<\/section>)/g;
+  const matches = [];
+  let um;
+  while((um = unitRe.exec(RAW)) !== null){
+    matches.push({index: um.index, full: um[0],
+                  comment: um[1] || "", open: um[2], inner: um[3], close: um[4]});
+  }
+  if(matches.length === 0) return RAW;  // 兜底：结构异常时不破坏源
+  const runStart = matches[0].index;
+  const runEnd = matches[matches.length - 1].index + matches[matches.length - 1].full.length;
+  const pre = RAW.slice(0, runStart);
+  const post = RAW.slice(runEnd);
+  let body = "";
+  for(let dp = 0; dp < order.length; dp++){
+    const orig = order[dp];  // 该显示位置对应的【原始】<section> 索引
+    const u = matches[orig];
+    const editedInner = (editedSlides[dp] && editedSlides[dp].innerHTML) || u.inner;
+    body += u.comment + u.open + editedInner + u.close + "\n";
+  }
+  return pre + body + post;
+}
+
+// 重排：交换显示位置 dp 与 dp+dir 两张幻灯片（dir=-1 上移，+1 下移）
+function moveSlide(dp, dir){
+  const np = dp + dir;
+  if(np < 0 || np >= order.length) return;
+  [order[dp], order[np]] = [order[np], order[dp]];
+  [editedSlides[dp], editedSlides[np]] = [editedSlides[np], editedSlides[dp]];
+  [sideItems[dp], sideItems[np]] = [sideItems[np], sideItems[dp]];
+  [wrapEls[dp], wrapEls[np]] = [wrapEls[np], wrapEls[dp]];
+  reflow();
+  dirty = true;
+  setStatus("已调整顺序", "ok");
+}
+
+// 拖拽排序：把显示位置 from 的项移动到 to（to 为放置目标项的显示位置）
+function moveTo(from, to){
+  if(from < 0 || to < 0 || from === to || from >= order.length) return;
+  const o = order.splice(from, 1)[0];
+  const es = editedSlides.splice(from, 1)[0];
+  const si = sideItems.splice(from, 1)[0];
+  const we = wrapEls.splice(from, 1)[0];
+  let insert = to > from ? to - 1 : to;  // splice 后索引整体前移一位
+  order.splice(insert, 0, o);
+  editedSlides.splice(insert, 0, es);
+  sideItems.splice(insert, 0, si);
+  wrapEls.splice(insert, 0, we);
+  reflow();
+  dirty = true;
+  setStatus("已移动页面", "ok");
+}
+
+// 按显示顺序把侧栏与编辑区 DOM 重新归位，并刷新序号 / 页码 / 按钮禁用态
+function reflow(){
+  for(let dp = 0; dp < order.length; dp++){
+    if(sideItems[dp]){ side.appendChild(sideItems[dp]); sideItems[dp].dataset.dp = dp; }
+    if(wrapEls[dp]){ editor.appendChild(wrapEls[dp]); }
+  }
+  renumber();
+  document.querySelectorAll(".s-item").forEach(x=>x.classList.remove("active"));
+  if(currentIndex >= 0 && currentIndex < order.length && sideItems[currentIndex]){
+    sideItems[currentIndex].classList.add("active");
+  }
+  // 首/末张禁用对应方向按钮
+  for(let dp = 0; dp < order.length; dp++){
+    if(!sideItems[dp]) continue;
+    const up = sideItems[dp].querySelector(".mv-up");
+    const down = sideItems[dp].querySelector(".mv-down");
+    if(up) up.disabled = (dp === 0);
+    if(down) down.disabled = (dp === order.length - 1);
+  }
+}
+
+// 更新侧栏序号、缩略图标签、chrome 页码（NN / 总数）
+function renumber(){
+  const total = order.length;
+  for(let dp = 0; dp < total; dp++){
+    const num = String(dp + 1).padStart(2, '0');
+    if(sideItems[dp]){
+      const pgSpan = sideItems[dp].querySelector(".pg");
+      if(pgSpan) pgSpan.textContent = num;
+    }
+    if(wrapEls[dp]){
+      const lbl = wrapEls[dp].querySelector(".slide-label .pg");
+      if(lbl) lbl.textContent = dp + 1;
+    }
+    const slide = editedSlides[dp];
+    if(slide){
+      slide.querySelectorAll(".chrome span").forEach(s=>{
+        if(/^\d{2} \/ \d{2}$/.test(s.textContent.trim())){
+          s.textContent = num + " / " + String(total).padStart(2, '0');
+        }
+      });
+    }
+  }
+}
+
+// 自动存草稿（防浏览器关闭丢失）：仅当确有未保存改动时才写；
+// 否则清掉草稿，避免「保存后 10s 又被 autosave 写回草稿 → 下次刷新必弹横幅」的回滚陷阱
+function autosave(){
+  try{
+    if(dirty){ localStorage.setItem(LS_KEY, buildHtml()); }
+    else { localStorage.removeItem(LS_KEY); }
+  }catch(e){}
+}
+
+// 保存 -> 后端写文件（带当前文件名）
+async function save(){
+  setStatus("保存中…");
+  const html = buildHtml();
+  try{
+    const r = await fetch("/api/save", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({file: currentFile, html})
+    });
+    const j = await r.json();
+    if(j.ok){ setStatus("已保存 ✓ "+j.bytes+" 字节", "ok"); localStorage.removeItem(LS_KEY); dirty = false; }
+    else setStatus("保存失败: "+j.error, "err");
+  }catch(e){ setStatus("保存失败: "+e.message, "err"); }
+}
+
+// 加载源文件（file 缺省用 currentFile）
+async function loadFromServer(file){
+  currentFile = file || currentFile;
+  setStatus("读取中…");
+  const r = await fetch("/api/load?file=" + encodeURIComponent(currentFile));
+  const text = await r.text();
+  RAW = text;
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  buildEditor(doc);
+  if(slideCount === 0){
+    setStatus("已载入 · "+currentFile+"（该文件无可编辑幻灯片，可能不是 deck 结构）", "err");
+  } else {
+    setStatus("已载入 "+slideCount+" 页 · "+currentFile, "ok");
+  }
+}
+
+// 从任意来源的 HTML 文本载入（文件选择器 / 拖拽 / 粘贴），filename 决定下次保存写到工作目录哪个文件
+async function loadFromContent(filename, text){
+  if(dirty && !confirm("当前有未保存改动，加载新文件将丢失这些改动。确定加载？")) return;
+  try{
+    RAW = text;
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    buildEditor(doc);
+    currentFile = filename;
+    // 文件选择器里如果没这个选项就追加（标「未保存」区分）
+    const sel = $("#file-select");
+    if(![...sel.options].some(o=>o.value===filename)){
+      const o = document.createElement("option");
+      o.value = filename; o.textContent = filename + " （未保存）";
+      sel.appendChild(o);
+    }
+    sel.value = filename;
+    dirty = true;  // 还没落盘，相对磁盘算未保存
+    if(slideCount === 0){
+      setStatus("已导入 · "+filename+"（无可编辑幻灯片，可能不是 deck 结构）", "err");
+    } else {
+      setStatus("已导入 "+slideCount+" 页 · "+filename+"（点保存即可写入工作目录）", "ok");
+    }
+  }catch(e){ setStatus("导入失败: "+e.message, "err"); }
+}
+
+// 渲染
+async function startRender(){
+  const r = await fetch("/api/render", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({file: currentFile})});
+  const j = await r.json();
+  if(j.ok){ $("#progress").style.display="block"; pollRender(); }
+  else setStatus(j.msg||"渲染未启动", "err");
+}
+function pollRender(){
+  fetch("/api/render-status").then(r=>r.json()).then(s=>{
+    const pct = s.total? Math.round(s.done/s.total*100):0;
+    $("#p-fill").style.width = pct+"%";
+    let txt;
+    if(s.running){ txt = `${s.last} · ${pct}%`; }
+    else if(s.cancelled){ txt = `已停止（${s.done}/${s.total}）`; }
+    else if(s.done){ txt = `完成：共 ${s.done} 页 ✓`; }
+    else { txt = "空闲"; }
+    $("#p-txt").textContent = txt;
+    if(s.running){ setTimeout(pollRender, 1500); }
+    else {
+      $("#prog-cancel").disabled = false; $("#prog-cancel").textContent = "停止渲染";
+      if(s.error && !s.cancelled){ setStatus("渲染出错: "+s.error, "err"); }
+      else if(s.cancelled){ setStatus("已停止渲染", "ok"); }
+      else { setStatus("渲染完成 ✓", "ok"); }
+      setTimeout(()=>{ $("#progress").style.display="none"; }, 2500);
+    }
+  }).catch(()=>setTimeout(pollRender,2000));
+}
+
+// 放大编辑：把指定 index 的 slide 临时升到 1:1 原尺寸，其他缩成 0 高隐藏
+function applyZoom(idx){
+  document.querySelectorAll(".slide-wrap.zoomed").forEach(w=>w.classList.remove("zoomed"));
+  const wraps = document.querySelectorAll(".slide-wrap");
+  if(idx >= 0 && idx < wraps.length){
+    const w = wraps[idx];
+    w.classList.add("zoomed");
+    setTimeout(()=>w.scrollIntoView({behavior:"smooth", block:"start"}), 50);
+  }
+  document.getElementById("btn-zoom").textContent = idx>=0 ? "返回缩略图" : "放大编辑当前页";
+}
+function toggleZoom(){
+  const on = !document.body.classList.contains("edit-mode");
+  if(on){
+    document.body.classList.add("edit-mode");
+    applyZoom(currentIndex >= 0 ? currentIndex : 0);
+  } else {
+    document.body.classList.remove("edit-mode");
+    applyZoom(-1);
+    setStatus("已返回缩略图模式", "ok");
+  }
+}
+
+// 事件
+$("#btn-save").addEventListener("click", save);
+$("#btn-render").addEventListener("click", startRender);
+$("#btn-zoom").addEventListener("click", toggleZoom);
+$("#btn-save-render").addEventListener("click", async ()=>{ await save(); await startRender(); });
+$("#btn-export").addEventListener("click", ()=>{
+  const blob = new Blob([buildHtml()], {type:"text/html"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = currentFile.replace(/\.html$/, "") + "-编辑版.html";
+  a.click();
+});
+// 导出 PPT：服务端渲染全部幻灯片 → 打包成 16:9 .pptx → 自动下载
+$("#btn-export-pptx").addEventListener("click", async ()=>{
+  const r = await fetch("/api/export-pptx", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({file: currentFile})});
+  const j = await r.json();
+  if(j.ok){ $("#p-title").textContent = "导出 PPT"; $("#progress").style.display="block"; pollExport(); }
+  else setStatus(j.msg||"导出未启动", "err");
+});
+function pollExport(){
+  fetch("/api/render-status").then(r=>r.json()).then(s=>{
+    const pct = s.total? Math.round(s.done/s.total*100):0;
+    $("#p-fill").style.width = pct+"%";
+    let txt;
+    if(s.phase==="building"){ txt = "正在打包 PPT…"; }
+    else if(s.running){ txt = `${s.last} · ${pct}%`; }
+    else if(s.pptx_ready){ txt = "PPT 已生成 ✓ 开始下载"; }
+    else if(s.pptx_error){ txt = "打包出错: "+s.error; }
+    else if(s.cancelled){ txt = "已停止"; }
+    else { txt = "空闲"; }
+    $("#p-txt").textContent = txt;
+    if(s.running || s.phase==="building"){
+      setTimeout(pollExport, 1500);
+    } else {
+      $("#prog-cancel").disabled = false; $("#prog-cancel").textContent = "停止渲染";
+      if(s.pptx_ready){
+        setStatus("PPT 已生成 ✓", "ok");
+        const a = document.createElement("a");
+        a.href = "/api/download-pptx";
+        a.download = s.pptx_name || "FDE认知片子-瑞士现代-v2.pptx";
+        a.click();
+        setTimeout(()=>{ $("#progress").style.display="none"; }, 2500);
+      } else if(s.pptx_error){
+        setStatus("PPT 打包出错: "+s.error, "err");
+      } else if(s.cancelled){
+        setStatus("已停止", "ok");
+      }
+    }
+  }).catch(()=>setTimeout(pollExport,2000));
+}
+$("#btn-reload").addEventListener("click", ()=>{
+  if(confirm("放弃当前所有未保存改动，从文件重新读取？")) loadFromServer();
+});
+$("#btn-history").addEventListener("click", openHistory);
+
+// 文件列表 / 切换
+async function getFiles(){
+  try{
+    const r = await fetch("/api/files");
+    const j = await r.json();
+    const sel = $("#file-select");
+    sel.innerHTML = "";
+    j.forEach(f=>{
+      const o = document.createElement("option");
+      o.value = f.rel; o.textContent = f.rel;
+      sel.appendChild(o);
+    });
+    sel.value = currentFile;
+    sel.onchange = ()=> switchFile(sel.value);
+  }catch(e){ setStatus("读取文件列表失败", "err"); }
+}
+async function switchFile(rel){
+  if(rel === currentFile) return;
+  if(dirty && !confirm("当前有未保存改动，切换文件将丢失这些改动。确定切换？")){
+    $("#file-select").value = currentFile; return;
+  }
+  await loadFromServer(rel);
+}
+
+// 「打开文件」按钮 → 触发隐藏的 file input
+$("#btn-open").addEventListener("click", ()=> $("#file-input").click());
+$("#file-input").addEventListener("change", async (e)=>{
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const text = await file.text();
+  await loadFromContent(file.name, text);
+  e.target.value = "";  // 重置，下次选同名文件还能触发 change
+});
+
+// 拖拽导入：编辑区 + 全窗口兜底
+const dropHint = $("#drop-hint");
+let dragDepth = 0;  // 用 enter/leave 计数器处理子元素冒泡
+window.addEventListener("dragenter", (e)=>{
+  if(!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  dragDepth++;
+  $("#editor").classList.add("drag-target");
+  dropHint.classList.add("on");
+});
+window.addEventListener("dragover", (e)=>{
+  if(![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();   // 必须 preventDefault，否则浏览器会接管（打开文件）
+  e.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", (e)=>{
+  dragDepth = Math.max(0, dragDepth - 1);
+  if(dragDepth === 0){
+    $("#editor").classList.remove("drag-target");
+    dropHint.classList.remove("on");
+  }
+});
+window.addEventListener("drop", async (e)=>{
+  if(!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  dragDepth = 0;
+  $("#editor").classList.remove("drag-target");
+  dropHint.classList.remove("on");
+  const file = e.dataTransfer.files[0];
+  if(!file) return;
+  if(!/\.html?$/i.test(file.name)){
+    setStatus("只支持 .html 文件拖拽导入", "err");
+    return;
+  }
+  const text = await file.text();
+  await loadFromContent(file.name, text);
+});
+
+// 历史快照面板
+async function openHistory(){
+  let j = [];
+  try{
+    const r = await fetch("/api/history?file=" + encodeURIComponent(currentFile));
+    j = await r.json();
+  }catch(e){}
+  const list = $("#hist-list");
+  list.innerHTML = "";
+  if(!j.length){
+    list.innerHTML = '<div style="color:var(--ui-muted);font-size:13px;padding:8px 0;">暂无历史记录（每次保存会自动生成快照）</div>';
+  }
+  j.forEach(h=>{
+    const d = new Date(h.mtime*1000);
+    const ts = d.toLocaleString('zh-CN', {hour12:false});
+    const row = document.createElement("div");
+    row.className = "h-row";
+    row.innerHTML = `<span class="h-ts">${ts}</span><span class="h-sz">${(h.size/1024).toFixed(1)}KB</span>`;
+    const bPrev = document.createElement("button"); bPrev.className="btn ghost"; bPrev.textContent="预览"; bPrev.style.padding="5px 10px";
+    bPrev.onclick = ()=> window.open('/api/history-file?file='+encodeURIComponent(currentFile)+'&snap='+encodeURIComponent(h.name));
+    const bDl = document.createElement("button"); bDl.className="btn ghost"; bDl.textContent="下载"; bDl.style.padding="5px 10px";
+    bDl.onclick = ()=>{ const a=document.createElement('a'); a.href='/api/history-file?file='+encodeURIComponent(currentFile)+'&snap='+encodeURIComponent(h.name); a.download=h.name; a.click(); };
+    const bRb = document.createElement("button"); bRb.className="btn"; bRb.textContent="回滚"; bRb.style.padding="5px 10px";
+    bRb.onclick = async ()=>{
+      if(!confirm('恢复到 '+ts+' 的版本？回滚前会自动保留当前版本。')) return;
+      try{
+        const rr = await fetch('/api/rollback', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({file: currentFile, snap: h.name})});
+        const rj = await rr.json();
+        if(rj.ok){
+          RAW = rj.html;
+          const doc = new DOMParser().parseFromString(rj.html, 'text/html');
+          buildEditor(doc);
+          dirty = true;
+          setStatus('已回滚到 '+ts, 'ok');
+          $("#history-modal").style.display = 'none';
+        } else setStatus('回滚失败: '+(rj.error||''), 'err');
+      }catch(e){ setStatus('回滚失败: '+e.message, 'err'); }
+    };
+    row.appendChild(bPrev); row.appendChild(bDl); row.appendChild(bRb);
+    list.appendChild(row);
+  });
+  $("#history-modal").style.display = "block";
+}
+$("#hist-close").addEventListener("click", ()=>{ $("#history-modal").style.display="none"; });
+$("#history-modal").addEventListener("click", (e)=>{ if(e.target.id==="history-modal") $("#history-modal").style.display="none"; });
+// 渲染进度条：× 关闭（不打断后台渲染）/ 停止渲染（真打断）
+$("#prog-close").addEventListener("click", ()=>{ $("#progress").style.display="none"; });
+$("#prog-cancel").addEventListener("click", async ()=>{
+  const btn = $("#prog-cancel");
+  if(btn.disabled) return;
+  btn.disabled = true; btn.textContent = "停止中…";
+  try{ await fetch("/api/cancel-render", {method:"POST"}); }catch(e){}
+});
+document.addEventListener("keydown", (e)=>{
+  if((e.metaKey||e.ctrlKey) && e.key==="s"){ e.preventDefault(); save(); return; }
+  // 回车不撞绝对定位：在 contenteditable 内拦截 Enter，改插 <br>（不嵌 <div><p>，避免多层 <p> 在同一 top:xxx 位置堆叠导致文字叠合）
+  if(e.key==="Enter" && !e.shiftKey){
+    const sel = window.getSelection();
+    if(sel && sel.rangeCount){
+      const node = sel.anchorNode;
+      if(node){
+        const el = node.nodeType === 1 ? node : node.parentElement;
+        if(el && el.closest('[contenteditable="true"]')){
+          e.preventDefault(); e.stopPropagation();
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          const br = document.createElement("br");
+          range.insertNode(br);
+          dirty = true;  // 回车改字也标记未保存
+          // 把光标移到 <br> 之后
+          const nr = document.createRange();
+          nr.setStartAfter(br); nr.collapse(true);
+          sel.removeAllRanges(); sel.addRange(nr);
+          return;
+        }
+      }
+    }
+  }
+});
+
+// 任何在编辑器内的手动改字都标记 dirty（contenteditable 的 input 事件冒泡到 #editor）
+$("#editor").addEventListener("input", ()=>{ dirty = true; });
+
+// 自动草稿
+setInterval(autosave, 10000);
+window.addEventListener("beforeunload", autosave);
+
+// 启动：永远先从磁盘（服务器）载入权威最新版本，草稿只是「可选恢复」，绝不静默覆盖
+getFiles().then(()=> loadFromServer(currentFile)).then(()=>{
+  const draft = localStorage.getItem(LS_KEY);
+  if(draft){
+    // 编辑器此刻已显示磁盘最新内容；草稿仅作可选项——忽略横幅 = 继续用磁盘版，
+    // 只有显式点「恢复草稿」才会用浏览器旧草稿覆盖。这就杜绝了「刷新→被迫恢复→回滚」的陷阱。
+    $("#banner").style.display = "flex";
+    $("#bn-restore").addEventListener("click", ()=>{
+      RAW = draft;
+      const doc = new DOMParser().parseFromString(draft, "text/html");
+      buildEditor(doc);
+      dirty = true;  // 恢复的内容相对磁盘算未保存，避免 autosave 立刻清掉它
+      $("#banner").style.display = "none";
+      setStatus("已恢复浏览器草稿（尚未写盘，点保存才生效）", "ok");
+    });
+    $("#bn-discard").addEventListener("click", ()=>{
+      localStorage.removeItem(LS_KEY);
+      $("#banner").style.display = "none";
+      setStatus("已放弃浏览器草稿，继续使用磁盘最新版本", "ok");
+    });
+  }
+});
+</script>
+</body>
+</html>
