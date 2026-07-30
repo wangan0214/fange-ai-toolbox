@@ -190,6 +190,12 @@
 <div id="topbar">
   <h1>帆哥的<span class="accent">PPT</span>编辑器</h1>
   <select id="file-select" class="btn ghost" title="切换要编辑的片子（工作目录内的 HTML）"></select>
+  <select id="viewport-select" class="btn ghost" title="源设计稿视口比例（响应式稿关键：影响 measureSrc 的 iframe 尺寸与 slide 缩放）">
+    <option value="16:10">视口 16:10（默认）</option>
+    <option value="16:9">视口 16:9</option>
+    <option value="9:16">视口 9:16（移动竖屏）</option>
+    <option value="4:3">视口 4:3</option>
+  </select>
   <!-- 用 <label for=> 替代 JS .click()，Chrome 不再拦截程序触发的 file dialog -->
   <label class="btn ghost" for="file-input" title="从本机导入任意 .html 文件（也可直接拖拽到编辑区）">打开</label>
   <input type="file" id="file-input" accept=".html,text/html" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
@@ -273,6 +279,7 @@ const LS_KEY = "fde_editor_draft_v1";
 const DEFAULT_FILE = "FDE认知片子-瑞士现代-v2.html";
 let currentFile = DEFAULT_FILE;  // 当前编辑的文件（相对 ALLOWED_ROOT 的路径）
 let origDoc = null, origSlides = [], editedSlides = [], slideCount = 0;
+let loadedDoc = null;  // 当前已加载的源 doc（供视口下拉切换时 buildEditor 重用）
 let dirty = false;  // 是否有相对磁盘的未保存改动（仅 dirty 时才写草稿，避免每次刷新都弹草稿横幅）
 let currentIndex = -1;  // 当前选中页索引（侧栏 active）
 let dragFrom = -1;  // 拖拽排序的源显示位置
@@ -339,11 +346,26 @@ function injectOrigCss(doc){
   `;
 }
 
+// 视口比例配置：响应式源（100vh/100vw）随用户选定的视口比例渲染。
+// 背景：EP25 这类全视口响应式稿，.slide 用 100vw×100vh + h1 用 vw 单位排版，
+//   在用户浏览器（9:16 portrait）的 vw/vh 计算结果，与编辑器 iframe 视口（默认 16:10）的
+//   vw/vh 计算结果不同——圆(62vw)、标题(6.2vw) 等元素尺寸/位置都会偏，导致封面排版看起来"变了"。
+// 修法：用户选 9:16，iframe 用 720×1280，measureSrc 探测到的 sw/sh 就是 720×1280，
+//   buildEditor 注入的 --edit-vw/--edit-vh 也是 720×1280，源 CSS 重算后的元素尺寸/位置与源浏览器一致。
+// 路径1（固定 width 源，如 FDE 1920×1080）走的是 CSS 字面量，与视口比例无关，不受影响。
+const VIEWPORTS = {
+  '16:10': {w: 1280, h: 800},
+  '16:9':  {w: 1280, h: 720},
+  '9:16':  {w: 720,  h: 1280},
+  '4:3':   {w: 1280, h: 960},
+};
+let viewportKey = '16:10';  // 默认 16:10（与 v1.0.14 行为一致）
+
 // 自动探测源设计稿真实尺寸。
 // 策略：优先从 doc 自己的 <style> 里扫出 .slide 固定 width（如 FDE `width:1920px`），有就直接用；
 //   扫不到固定 width（响应式源如 EP25，只有 min-width:1280px）再用 probe 兜底——但 probe 必须放在
 //   独立 iframe 里跑，不能用主 document（否则会被上一次 buildEditor 注入的源 CSS 污染）。
-// 高度：所有现代 HTML PPT 均为 16:9 设计稿，直接用 宽度 × 9/16 推算。
+// 高度：响应式稿按用户选的视口比例的 iframe 尺寸；固定 width 源按 9/16 推算。
 function measureSrc(doc){
   // 路径1：扫 doc 内联 CSS 找 .slide 块的固定 width（FDE 1920、1280 等）
   // ⚠️ 关键：必须排除 max-width / min-width —— EP25 的 .slide-inner{max-width:1140px} 会让
@@ -383,15 +405,17 @@ function measureSrc(doc){
     if(foundW) return {w: foundW, h: Math.round(foundW * 9 / 16)};
   }catch(e){}
   // 路径2：独立 iframe 测 probe（避开主 document 残留 CSS）
-  // 关键：给 iframe 设一个明确的"标准参考视口"（1280×800），让源 .slide{min-width:100vw; height:100vh} 自然撑到 1280×800。
-  // 用 width:1px iframe 会让 100vw=1px，测出来不准；用真实视口大小才符合源设计稿预期。
-  // 同时测 w 和 h（源不一定是 16:9，EP25 是 16:10=1280×800），不要默认推 9/16。
+  // 关键：iframe 视口用用户选的「视口比例」对应的 W×H（如 9:16 → 720×1280，16:10 → 1280×800），
+  //   让源 .slide{min-width:100vw; height:100vh} 自然撑到该尺寸——这样源 CSS 里 vw/vh 单位的换算
+  //   与用户浏览器一致，标题(6.2vw)/光晕(62vw) 等元素尺寸/位置就 1:1。
+  // 同时测 w 和 h（不要默认推 9/16；视口比例由 dropdown 决定），保留 fallback。
+  const vp = VIEWPORTS[viewportKey] || VIEWPORTS['16:10'];
   const sample = doc.querySelector('.slide');
-  if(!sample) return {w:1280, h:720};
-  let w = 1280, h = 720;
+  if(!sample) return {w: vp.w, h: vp.h};
+  let w = vp.w, h = vp.h;
   try{
     const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:absolute;left:-99999px;top:0;width:1280px;height:800px;border:0;visibility:hidden;';
+    iframe.style.cssText = 'position:absolute;left:-99999px;top:0;width:' + vp.w + 'px;height:' + vp.h + 'px;border:0;visibility:hidden;';
     document.body.appendChild(iframe);
     const idoc = iframe.contentDocument;
     // 把 doc 的 head 全部 style 拷过去（仅这次测用，不污染主 document）
@@ -402,8 +426,8 @@ function measureSrc(doc){
     probe.style.cssText = 'position:static!important;top:auto!important;left:auto!important;right:auto!important;' +
       'bottom:auto!important;transform:none!important;float:none!important;margin:0!important;';
     idoc.body.appendChild(probe);
-    w = probe.offsetWidth || 1280;
-    h = probe.offsetHeight || Math.round(w * 9 / 16);
+    w = probe.offsetWidth || vp.w;
+    h = probe.offsetHeight || vp.h;
     iframe.remove();
   }catch(e){ console.log('[measureSrc] iframe error:', e.message); }
   return {w, h};
@@ -428,6 +452,7 @@ function collectBgLayers(doc){
 
 // 构建编辑器（doc 为已解析的源文档）
 function buildEditor(doc){
+  loadedDoc = doc;          // 记住当前源文档，供视口下拉切换时重新构建
   origDoc = doc;
   origSlides = [...doc.querySelectorAll('.slide')];
   slideCount = origSlides.length;
@@ -440,7 +465,10 @@ function buildEditor(doc){
   editor.style.setProperty('--edit-vw', w + 'px');
   editor.style.setProperty('--sw', w + 'px');
   editor.style.setProperty('--sh', h + 'px');
-  editor.style.setProperty('--sc', (960 / w).toFixed(4));  // 缩略图统一按宽度 960px 缩放
+  // 缩放比按"宽 960、高 700"双约束取最小——保证 9:16（720×1280）这种竖屏稿不会撑爆编辑器高度
+  const scW = 960 / w;
+  const scH = 700 / h;
+  editor.style.setProperty('--sc', Math.min(scW, scH).toFixed(4));
 
   injectOrigCss(doc);
 
@@ -936,6 +964,16 @@ async function getFiles(){
     });
     sel.value = currentFile;
     sel.onchange = ()=> switchFile(sel.value);
+    // 视口下拉：响应式源（EP25 类）按浏览器实际视口比例渲染（默认 16:10 → 9:16 立即还原源截图）
+    const vsel = $("#viewport-select");
+    vsel.value = viewportKey;
+    vsel.onchange = ()=>{
+      viewportKey = vsel.value;
+      if(loadedDoc){
+        buildEditor(loadedDoc);          // 用新视口重新探测 sw/sh + 重算 --sc + 重渲
+        setStatus("视口已切换到 " + viewportKey + "（" + (VIEWPORTS[viewportKey].w) + "×" + (VIEWPORTS[viewportKey].h) + "）", "ok");
+      }
+    };
   }catch(e){ setStatus("读取文件列表失败", "err"); }
 }
 async function switchFile(rel){

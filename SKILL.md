@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.14
+version: 1.0.15
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -113,6 +113,37 @@ python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.15（2026-07-30）顶栏视口比例下拉（响应式稿关键）
+
+**根因**：响应式源（`.slide{min-width:100vw;height:100vh}` + `h1{font-size:6.2vw}` + `.bg-deco::before{width:62vw;height:62vw}`，无任何固定 width）渲染时**完全依赖视口尺寸**——源 CSS 里所有元素的位置/字号/光晕大小都按视口的 vw/vh 计算。
+
+- 用户在浏览器里以 **9:16 portrait**（约 624×1130）查看 EP25 源 → 62vw=387px 圆，标题 clamp(34, 38.7, 72)=38.7px
+- 旧编辑器用硬编码 **1280×800 iframe** 探测 → sw/sh=1280×800，注入的 vw/vh 变量按 1280 算 → 62vw=794px 圆，标题 clamp(34, 79.4, 72)=72px
+- 同一个源，**视口比例不同 → 渲染出的封面排版完全不同**（标题位置、光晕大小、内容垂直居中点都跟着变）
+
+**修法**：顶栏 `#file-select` 旁加 `#viewport-select` 下拉（4 选 1）：
+
+| 比例 | iframe W×H | 适用场景 |
+|---|---|---|
+| 16:10（默认） | 1280×800 | 桌面宽屏/默认 |
+| 16:9 | 1280×720 | 标准 PPT 演示 |
+| 9:16 | 720×1280 | **移动竖屏**（EP25 类自媒体封面） |
+| 4:3 | 1280×960 | 传统投影/老 PPT |
+
+- `measureSrc` 路径2 的 iframe 视口改用 `VIEWPORTS[viewportKey]`
+- `buildEditor` 的 `--sc` 改为 `Math.min(960/w, 700/h)`（fit-both-dimensions）—— 避免 9:16（720×1280）按 960/w=1.33 把 frame 撑到 960×1707 撑爆编辑器
+- change 事件触发 `buildEditor(loadedDoc)` 重新探测 sw/sh + 重渲
+- 路径1（固定 width 源，如 FDE 1920×1080）走 CSS 字面量，与视口无关——实测 FDE 切 9:16 仍 1920×1080 ✓
+
+**回归范围**（v1.0.15 修复后实测）：
+- EP25 默认 16:10: sw=1280, sh=800, sc=0.7500, frame=960×600 ✓（与 v1.0.14 完全一致）
+- EP25 切 9:16: sw=720, sh=1280, sc=0.5469, frame=394×700；视觉 1:1 还原用户源 PPT 截图 ✓
+- EP25 切 16:9: sw=1280, sh=720, sc=0.7500, frame=960×540 ✓
+- EP25 切 4:3: sw=1280, sh=960, sc=0.7292, frame=933×700 ✓
+- EP25 反复切回 9:16: 稳定 720×1280，无 CSS 污染 / inline 残留 ✓
+- FDE 瑞士现代 v2（固定 1920×1080）切 9:16: 仍 sw=1920, sh=1080, sc=0.5000 ✓
+- 无页面报错；bg1=#FFF7F1 在所有视口下都生效（v1.0.14 修复未破）
 
 ### v1.0.14（2026-07-30）EP25 视口稿探测 + injectOrigCss 嵌套 style 不解析
 
