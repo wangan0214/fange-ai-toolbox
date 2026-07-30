@@ -14,13 +14,15 @@ PORT="${2:-8731}"
 # 绝对路径
 ROOT="$(cd "$ROOT" && pwd)"
 
-# 找 python（优先用 WorkBuddy 托管 venv，否则用系统 python3）
-PY="/Users/fanshuai/.workbuddy/binaries/python/envs/default/bin/python3"
-if [ ! -x "$PY" ]; then
-  PY="$(command -v python3)"
+# 找 python：优先系统 python3（需自行 pip install playwright），
+# 若在 WorkBuddy 托管环境则回退到其 venv（已含 playwright）
+PY="$(command -v python3 || command -v python)"
+if [ -z "$PY" ]; then
+  MANAGED="/Users/fanshuai/.workbuddy/binaries/python/envs/default/bin/python3"
+  [ -x "$MANAGED" ] && PY="$MANAGED"
 fi
 if [ -z "$PY" ]; then
-  echo "❌ 没找到 python3，请先安装 Python 3"
+  echo "❌ 没找到 python3，请先安装 Python 3（并 pip install playwright）"
   exit 1
 fi
 

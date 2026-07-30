@@ -9,31 +9,69 @@
     --ui-bg:#0d0d0f; --ui-panel:#1c1c22; --ui-line:#3d3d48; --ui-text:#eef0f3;
     --ui-muted:#9ea0a8; --red:#ff3300; --red-hover:#ff4520; --green:#22c55e;
     --ui-btn-bg:#26262f; --ui-btn-hover:#33333e;
+    /* 源设计稿尺寸变量：默认 1280×720（标准 16:9）；buildEditor 探测真实尺寸后覆盖到 #editor */
+    --edit-vh:720px; --edit-vw:1280px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;height:100%;background:var(--ui-bg);color:var(--ui-text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
-  /* 顶栏 */
-  #topbar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--ui-panel);
-    border-bottom:1px solid var(--ui-line);position:sticky;top:0;z-index:20;}
-  #topbar h1{font-size:15px;margin:0 6px 0 0;font-weight:700;letter-spacing:.3px;white-space:nowrap;flex:none;}
+  /* 页面纵向 flex：顶栏高度自适应（可换行），主区吃满剩余高度 */
+  body{display:flex;flex-direction:column;}
+  /* 顶栏：主操作常驻一行，次要操作收进「更多 ▾」；窄屏自动换行（body 为 flex column，#main 自适应高度） */
+  #topbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;background:var(--ui-panel);
+    border-bottom:1px solid var(--ui-line);position:sticky;top:0;z-index:20;overflow:visible;}
+  #topbar h1{font-size:15px;margin:0 4px 0 0;font-weight:700;letter-spacing:.3px;white-space:nowrap;flex:none;}
   #topbar h1 .accent{color:var(--red);}
   #topbar .spacer{flex:1;}
+  /* 视觉分隔线 */
+  .tb-sep{width:1px;height:22px;background:var(--ui-line);flex:none;margin:0 2px;}
+  /* 导出组：模式选择 + 导出按钮 紧贴成一组 */
+  .exp-group{display:flex;align-items:center;gap:8px;flex:none;}
+  /* 「更多 ▾」下拉 */
+  .tb-more{position:relative;flex:none;}
+  .more-menu{display:none;position:absolute;top:calc(100% + 8px);right:0;z-index:40;
+    background:var(--ui-panel);border:1px solid var(--ui-line);border-radius:10px;padding:6px;
+    box-shadow:0 12px 36px rgba(0,0,0,.5);min-width:184px;}
+  .more-menu.open{display:block;}
+  .more-menu .btn{display:block;width:100%;text-align:left;margin:2px 0;border-color:transparent;background:transparent;white-space:nowrap;}
+  .more-menu .btn:hover{border-color:var(--red);background:var(--ui-btn-hover);}
+  /* 文件选择：限制最大宽度 + 允许收缩，长文件名不再撑爆整行 */
+  #file-select{max-width:200px;min-width:0;background:var(--ui-btn-bg);color:var(--ui-text);border-color:var(--ui-line);}
+  #file-select:hover{border-color:var(--red);}
+  #file-select option{background:var(--ui-btn-bg);color:var(--ui-text);}
   .btn{border:1px solid var(--ui-line);background:var(--ui-btn-bg);color:var(--ui-text);padding:8px 14px;
     border-radius:8px;font-size:13px;cursor:pointer;transition:.15s;font-weight:500;white-space:nowrap;
     box-shadow:0 1px 0 rgba(255,255,255,0.04) inset;}
   .btn:hover{border-color:var(--red);background:var(--ui-btn-hover);color:#fff;}
   .btn:active{transform:translateY(1px);}
   .btn.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
+  /* 飞书授权引导模态框 */
+  #auth-modal{display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.6);backdrop-filter:blur(2px);}
+  #auth-modal.open{display:flex;}
+  #auth-modal .card{width:min(560px,92vw);background:var(--ui-panel);border:1px solid var(--ui-line);
+    border-radius:14px;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+  #auth-modal h3{margin:0 0 8px;font-size:17px;color:var(--ui-text);}
+  #auth-modal h3 .dot{color:var(--red);}
+  #auth-modal p{margin:6px 0;font-size:13px;color:var(--ui-muted);line-height:1.6;}
+  #auth-modal .who{color:var(--ui-text);font-weight:600;}
+  #auth-modal pre{margin:12px 0;padding:12px 14px;background:#0b0b0e;border:1px solid var(--ui-line);
+    border-radius:8px;color:#9fe6b0;font-size:13px;overflow:auto;white-space:pre-wrap;word-break:break-all;}
+  #auth-modal .row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
+  #auth-modal .hint{font-size:12px;color:var(--ui-muted);}
   .btn.primary:hover{background:var(--red-hover);border-color:var(--red-hover);color:#fff;}
   .btn.ghost{background:rgba(255,255,255,0.05);border-color:#4a4a56;}
   .btn.ghost:hover{background:rgba(255,255,255,0.10);border-color:var(--red);}
-  #status{font-size:12px;color:var(--ui-muted);min-width:220px;text-align:right;}
+  select.btn.ghost{-webkit-appearance:none;appearance:none;padding-right:30px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%23bbb' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 12px center;max-width:200px;}
+  select.btn.ghost option{background:#2a2a30;color:var(--ui-text);}
+  #status{font-size:12px;color:var(--ui-muted);min-width:180px;text-align:right;margin-left:auto;}
   #status.ok{color:var(--green);}
   #status.err{color:var(--red);}
 
   /* 布局 */
-  #main{display:flex;height:calc(100% - 53px);}
+  #main{flex:1 1 auto;min-height:0;display:flex;overflow:hidden;}
   #side{width:200px;background:var(--ui-panel);border-right:1px solid var(--ui-line);
     overflow:auto;padding:10px 0;flex:none;}
   #side .s-item{display:flex;align-items:center;gap:6px;padding:9px 12px;font-size:13px;color:var(--ui-muted);cursor:pointer;
@@ -49,25 +87,46 @@
   #side .s-item .mv button:hover:not(:disabled){background:var(--red);color:#fff;}
   #side .s-item .mv button:disabled{opacity:.25;cursor:not-allowed;}
 
-  #editor{flex:1;overflow:auto;padding:24px;background:#0a0a0c;}
+  /* --sw/--sh/--sc 默认兜底放这里（#editor，作为所有 .slide-frame 的祖先）。
+     buildEditor 会按真实源设计稿覆盖这三个值，.slide-frame/.slide 通过继承拿到真实尺寸。
+     注意：绝不能把它们写在 .slide-frame 规则里，否则会遮蔽 #editor 上的探测值（FDE 1920×1080 会被压成 1280×720）。 */
+  #editor{flex:1;overflow:auto;padding:24px;background:#0a0a0c;--sw:1280px;--sh:720px;--sc:.75;}
   /* 默认缩略图模式：所有 slide 以 0.5x (960×540) 缩略排列，能看到全部 26 张 + 各自底色/网格 */
   .slide-wrap{margin:0 auto 26px;max-width:980px;}
   .slide-label{font-size:12px;color:var(--ui-muted);margin:0 0 6px 4px;}
   .slide-label .pg{color:var(--red);font-weight:700;}
-  .slide-frame{width:960px;height:540px;overflow:hidden;position:relative;
+  /* 源设计稿尺寸用 CSS 变量驱动：--sw/--sh = 源真实像素尺寸，--sc = 缩略比。
+     默认 1280×720（标准 16:9）；JS 在 buildEditor 里自动探测每个文件真实尺寸后覆盖，
+     这样响应式源（100vh/100vw，如 EP25）和固定设计稿源（如 FDE 1920×1080）都能正确显示。 */
+  /* --sw/--sh/--sc 不再在此声明，改为从 #editor 继承（buildEditor 写入真实源尺寸）。
+     这样 FDE(1920×1080)/EP25(1280×720) 都能正确驱动 frame 与 slide 尺寸。 */
+  .slide-frame{
+    width:calc(var(--sw) * var(--sc));height:calc(var(--sh) * var(--sc));
+    overflow:hidden;position:relative;
     border:1px solid var(--ui-line);border-radius:6px;background:#000;
     margin:0 auto;box-shadow:0 6px 24px rgba(0,0,0,.4);}
   .slide-frame:focus-within{border-color:var(--red);}
   .slide-frame .slide{position:absolute!important;top:0!important;left:0!important;
-    transform:scale(.5)!important;transform-origin:top left!important;
-    width:1920px!important;height:1080px!important;opacity:1!important;
-    visibility:visible!important;display:block!important;}
+    transform:scale(var(--sc))!important;transform-origin:top left!important;
+    width:var(--sw)!important;height:var(--sh)!important;opacity:1!important;
+    visibility:visible!important;display:block!important;z-index:1!important;}
+
+  /* 源背景装饰层（如 EP25 的 .bg-deco）：clone 进 frame 铺满底层，避免响应式源背景丢失。
+     背景层元素原是 position:fixed（相对窗口），这里强制 absolute 让它相对 frame（而非 viewport）。
+     关键：不能强制 inset:0!important，否则会盖住源 ::before/::after 的 top:-22vh/left:-10vw 等定位
+     ——EP25 装饰光晕偏移被吃成 0 就会只剩中央一个光晕。inset 由源 CSS 自己负责（多数背景层都自带 inset:0）。*/
+  .slide-frame .bg-layer{position:absolute!important;inset:0!important;z-index:0!important;
+    overflow:hidden;pointer-events:none;}
+  .slide-frame .bg-layer > *{position:absolute!important;}
+
+  /* 兜底：万一源背景层没写 inset，加一个无 !important 的兜底（被源 CSS 自己的具体定位覆盖） */
+  .slide-frame .bg-layer > *:not([style*="inset"]):not([style*="top"]){inset:0;}
 
   /* 放大编辑模式：被 .zoomed 包裹的 slide 临时 1:1 原尺寸渲染，方便精确改字 */
   body.edit-mode .slide-wrap:not(.zoomed) .slide-frame{height:0;margin-top:-14px;border-color:transparent;box-shadow:none;}
   body.edit-mode .slide-wrap:not(.zoomed){margin-bottom:0;}
   body.edit-mode .slide-wrap:not(.zoomed) .slide-label{visibility:hidden;}
-  .slide-wrap.zoomed .slide-frame{width:1920px;height:1080px;}
+  .slide-wrap.zoomed .slide-frame{--sc:1;width:var(--sw);height:var(--sh);}
   .slide-wrap.zoomed .slide-frame .slide{transform:none!important;}
 
   /* 草稿恢复横幅 */
@@ -92,10 +151,8 @@
   ::-webkit-scrollbar{width:10px;height:10px;}
   ::-webkit-scrollbar-thumb{background:#333;border-radius:5px;}
 
-  /* 文件选择器 */
-  #file-select{max-width:240px;background:var(--ui-btn-bg);color:var(--ui-text);border-color:var(--ui-line);}
+  /* 文件选择器（基础样式见上方 #topbar 区域，这里仅补 hover） */
   #file-select:hover{border-color:var(--red);}
-  #file-select option{background:var(--ui-btn-bg);color:var(--ui-text);}
   /* 拖拽导入：编辑区整块作为接收区 */
   #editor.drag-target{outline:3px dashed var(--green);outline-offset:-12px;background:#0f1a14;}
   #drop-hint{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
@@ -110,6 +167,13 @@
   #history-modal .h-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--ui-line);font-size:13px;}
   #history-modal .h-row .h-ts{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   #history-modal .h-row .h-sz{color:var(--ui-muted);}
+  /* 窄屏：隐藏品牌字、缩小间距与文件框，进一步防溢出 */
+  @media (max-width:820px){
+    #topbar h1{display:none;}
+    #topbar{gap:6px;padding:8px 10px;}
+    #file-select{max-width:140px;}
+    #status{min-width:120px;font-size:11px;}
+  }
 </style>
 <!-- 源文件样式（由 JS 注入，仅用于编辑器内预览，不写回文件） -->
 <style id="orig-css"></style>
@@ -117,19 +181,34 @@
 <body>
 
 <div id="topbar">
-  <h1>帆哥<span class="accent">PPT</span>编辑器</h1>
+  <h1>帆哥的<span class="accent">PPT</span>编辑器</h1>
   <select id="file-select" class="btn ghost" title="切换要编辑的片子（工作目录内的 HTML）"></select>
-  <button class="btn ghost" id="btn-open" title="打开本地 .html 文件（也可直接拖拽到编辑区）">打开文件</button>
-  <input type="file" id="file-input" accept=".html,text/html" style="display:none">
+  <!-- 用 <label for=> 替代 JS .click()，Chrome 不再拦截程序触发的 file dialog -->
+  <label class="btn ghost" for="file-input" title="从本机导入任意 .html 文件（也可直接拖拽到编辑区）">打开</label>
+  <input type="file" id="file-input" accept=".html,text/html" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+  <div class="tb-sep"></div>
   <button class="btn primary" id="btn-save">保存（⌘S）</button>
-  <button class="btn" id="btn-save-render">保存并渲染</button>
-  <button class="btn ghost" id="btn-render">仅重新渲染</button>
-  <button class="btn ghost" id="btn-zoom">放大编辑当前页</button>
-  <button class="btn ghost" id="btn-export">导出 HTML</button>
-  <button class="btn" id="btn-export-pptx">导出 PPT</button>
-  <button class="btn ghost" id="btn-history">历史</button>
-  <button class="btn ghost" id="btn-reload">放弃改动重读</button>
-  <div class="spacer"></div>
+  <div class="exp-group">
+    <select id="export-mode" class="btn ghost" title="导出 PPT 的格式：可编辑版（文字可改）/ 高清整页图（整页截图，不可改字）">
+      <option value="editable">可编辑版（文字可改）</option>
+      <option value="image">高清整页图（整页截图）</option>
+    </select>
+    <button class="btn" id="btn-export-pptx">导出 PPT</button>
+  </div>
+  <div class="tb-more">
+    <button class="btn ghost" id="btn-more" title="更多操作">更多 ▾</button>
+    <div class="more-menu" id="more-menu">
+      <button class="btn" id="btn-save-render">保存并渲染</button>
+      <button class="btn" id="btn-render">仅重新渲染</button>
+      <button class="btn" id="btn-zoom">放大编辑当前页</button>
+      <button class="btn" id="btn-export">导出 HTML</button>
+      <button class="btn" id="btn-history">历史</button>
+      <button class="btn" id="btn-reload">放弃改动重读</button>
+      <div class="m-sep" style="padding:6px 12px 2px;font-size:11px;color:var(--ui-muted);border-top:1px solid var(--ui-line);margin-top:6px;">— 飞书云空间 —</div>
+      <button class="btn" id="btn-up-html">上传当前 HTML</button>
+      <button class="btn" id="btn-up-pptx">上传导出 PPTX</button>
+    </div>
+  </div>
   <div id="status">就绪</div>
 </div>
 
@@ -166,6 +245,22 @@
   </div>
 </div>
 
+<!-- 飞书授权引导模态框：未绑定/未授权时上传触发 -->
+<div id="auth-modal">
+  <div class="card">
+    <h3><span class="dot">●</span> 需要先授权飞书账号</h3>
+    <p id="auth-msg">上传到飞书云空间需要本机已授权并绑定飞书账号。当前环境检测到以下情况：</p>
+    <p id="auth-who" class="who"></p>
+    <p>请在<strong>终端</strong>执行下面的命令完成授权（会打开浏览器让你登录飞书并确认授权）：</p>
+    <pre id="auth-cmd">lark-cli auth login</pre>
+    <p class="hint">授权成功后，回到本页面点击「我已授权，重试」即可上传。命令中的 <code>lark-cli</code> 需已安装（本编辑器依赖它上传）。</p>
+    <div class="row">
+      <button class="btn" id="auth-copy">复制命令</button>
+      <button class="btn primary" id="auth-retry">我已授权，重试</button>
+      <button class="btn" id="auth-close">关闭</button>
+    </div>
+  </div>
+</div>
 <script>
 const LS_KEY = "fde_editor_draft_v1";
 const DEFAULT_FILE = "FDE认知片子-瑞士现代-v2.html";
@@ -180,13 +275,30 @@ let order = [], sideItems = [], wrapEls = [];
 
 const $ = (s) => document.querySelector(s);
 const statusEl = $("#status");
-function setStatus(msg, cls){ statusEl.textContent = msg; statusEl.className = cls || ""; }
+function setStatus(msg, cls, html){ if(html){ statusEl.innerHTML = msg; } else { statusEl.textContent = msg; } statusEl.className = cls || ""; }
+
+// 把源 CSS 里的响应式视口单位（100vh/50vw/22vh 等，含 svh/lvh/dvh）替换为基于
+// 设计稿变量的 calc()，避免这些单位在编辑器环境里穿透成「编辑器窗口尺寸」。
+// 例：100vh -> calc(100 / 100 * var(--edit-vh))；22vw -> calc(22 / 100 * var(--edit-vw))
+// --edit-vh / --edit-vw 由 buildEditor 探测到真实设计稿尺寸后写入 #editor（默认 720/1280）。
+function fixViewportUnits(css){
+  // 兼容负号: -22vh 必须转成 calc(-22/100 * var(--edit-vh))，不能写成 -calc(...)
+  // （-calc(...) 是无效语法，浏览器会 fallback 到 0，导致 EP25 .bg-deco::before top 丢失）
+  return css.replace(/(-?[\d.]+)(?:s|l|d)?v(h|w)/g,
+    (m, n, u) => `calc(${n} / 100 * var(--edit-v${u}))`);
+}
 
 // 收集源文件 <head> 里的 style / 外链样式（不含脚本），注入编辑器预览
 function injectOrigCss(doc){
   const parts = [];
   doc.querySelectorAll('head style, head link[rel="stylesheet"]').forEach(el=>{
-    parts.push(el.outerHTML);
+    if(el.tagName === "STYLE"){
+      const s = document.createElement("style");
+      s.textContent = fixViewportUnits(el.textContent);
+      parts.push(s.outerHTML);
+    } else {
+      parts.push(el.outerHTML);
+    }
   });
   // 源 CSS 塞进 #orig-css（grid 能显示证明这条路径有效）。
   $("#orig-css").innerHTML = parts.join("\n");
@@ -204,8 +316,10 @@ function injectOrigCss(doc){
     :root{--slide-bg:#ffffff;--ink:#0a0a0a;--accent:#ff3300;--muted:#6b6b6b;--panel:#f4f4f2;--line:rgba(0,0,0,0.06);}
     .reveal{opacity:1!important;transform:none!important;transition:none!important;}
     .slide,.slide.active,.slide.visible{visibility:visible!important;opacity:1!important;pointer-events:auto!important;z-index:1!important;}
-    /* 强制 slide 实心底色 + 网格压淡，跟 deck 真实渲染一致 */
-    .slide{background:#ffffff!important;}
+    /* 强制 slide 实心底色 + 网格压淡，跟 deck 真实渲染一致。
+       --slide-bg 默认 #fff（兜底白底，适合无背景层的源如 FDE）；
+       若源带背景装饰层（如 EP25 的 .bg-deco），buildEditor 会把它设成 transparent 让背景透出 */
+    .slide{background:var(--slide-bg,#ffffff)!important;}
     .grid-lines{opacity:0.4!important;}
     /* 文本兜底：headline/kicker 全部走 var(--ink)/var(--accent)，变体颜色用 !important 锁定 */
     .kicker{color:var(--accent,#ff3300)!important;opacity:1!important;}
@@ -216,14 +330,97 @@ function injectOrigCss(doc){
   `;
 }
 
+// 自动探测源设计稿真实尺寸。
+// 策略：优先从 doc 自己的 <style> 里扫出 .slide 固定 width（如 FDE `width:1920px`），有就直接用；
+//   扫不到固定 width（响应式源如 EP25，只有 min-width:1280px）再用 probe 兜底——但 probe 必须放在
+//   独立 iframe 里跑，不能用主 document（否则会被上一次 buildEditor 注入的源 CSS 污染）。
+// 高度：所有现代 HTML PPT 均为 16:9 设计稿，直接用 宽度 × 9/16 推算。
+function measureSrc(doc){
+  // 路径1：扫 doc 内联 CSS 找 .slide 的固定 width（FDE 1920、1280 等）
+  try{
+    let foundW = null, foundH = null;
+    doc.querySelectorAll('style').forEach(st=>{
+      const t = st.textContent || '';
+      // 匹配 .slide / .deck-stage / :root 上的 width/height 固定像素值
+      const mW = t.match(/\.slide[^}]*?width\s*:\s*(\d+)px/i);
+      const mH = t.match(/\.slide[^}]*?height\s*:\s*(\d+)px/i);
+      if(mW && !foundW) foundW = parseInt(mW[1], 10);
+      if(mH && !foundH) foundH = parseInt(mH[1], 10);
+      const mdW = t.match(/\.deck-stage[^}]*?width\s*:\s*(\d+)px/i);
+      const mdH = t.match(/\.deck-stage[^}]*?height\s*:\s*(\d+)px/i);
+      if(mdW && !foundW) foundW = parseInt(mdW[1], 10);
+      if(mdH && !foundH) foundH = parseInt(mdH[1], 10);
+    });
+    if(foundW && foundH) return {w: foundW, h: foundH};
+    if(foundW) return {w: foundW, h: Math.round(foundW * 9 / 16)};
+  }catch(e){}
+  // 路径2：独立 iframe 测 probe（避开主 document 残留 CSS）
+  const sample = doc.querySelector('.slide');
+  if(!sample) return {w:1280, h:720};
+  let w = 1280;
+  try{
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:absolute;left:-99999px;top:0;width:1px;height:1px;border:0;visibility:hidden;';
+    document.body.appendChild(iframe);
+    const idoc = iframe.contentDocument;
+    // 把 doc 的 head 全部 style 拷过去（仅这次测用，不污染主 document）
+    doc.querySelectorAll('head style, head link[rel="stylesheet"]').forEach(el=>{
+      idoc.head.appendChild(el.cloneNode(true));
+    });
+    const probe = sample.cloneNode(true);
+    probe.style.cssText = 'position:static!important;top:auto!important;left:auto!important;right:auto!important;' +
+      'bottom:auto!important;transform:none!important;float:none!important;margin:0!important;';
+    idoc.body.appendChild(probe);
+    w = probe.offsetWidth || 1280;
+    iframe.remove();
+  }catch(e){}
+  const h = Math.round(w * 9 / 16);
+  return {w, h};
+}
+
+// 收集源 HTML <body> 直接子级里的「背景/装饰层」（如 EP25 的 .bg-deco）。
+// 这些元素不在 .slide 内，但决定了片子底色/光晕，必须随每页一起渲染，否则背景丢失变白。
+// 排除 .slide / #deck（容器）/ 翻页控件（.nav/.progress/#next/#prev/#bar/#counter）。
+function collectBgLayers(doc){
+  const skipIds = new Set(['deck','nav','progress','bar','counter','next','prev']);
+  const layers = [];
+  [...doc.body.children].forEach(el=>{
+    const id = el.id || '';
+    if(skipIds.has(id)) return;
+    if(el.classList.contains('slide')) return;
+    if(el.classList.contains('nav') || el.classList.contains('progress')) return;
+    const cls = (el.className || '').toString();
+    if(/bg|deco|background|watermark|glow|blur|layer/i.test(cls)) layers.push(el);
+  });
+  return layers;
+}
+
 // 构建编辑器（doc 为已解析的源文档）
 function buildEditor(doc){
   origDoc = doc;
   origSlides = [...doc.querySelectorAll('.slide')];
   slideCount = origSlides.length;
+
+  // 先探测源设计稿尺寸，写入 #editor 的 --edit-vh/--edit-vw/--sw/--sh/--sc，
+  // injectOrigCss 注入的 calc(var(--edit-vh)) 会随之自动用真实尺寸（CSS 变量运行时解析）。
+  const {w, h} = measureSrc(doc);
+  const editor = $("#editor");
+  editor.style.setProperty('--edit-vh', h + 'px');
+  editor.style.setProperty('--edit-vw', w + 'px');
+  editor.style.setProperty('--sw', w + 'px');
+  editor.style.setProperty('--sh', h + 'px');
+  editor.style.setProperty('--sc', (960 / w).toFixed(4));  // 缩略图统一按宽度 960px 缩放
+
   injectOrigCss(doc);
 
-  const editor = $("#editor");
+  // 背景层（若有）：clone 进每页 frame 铺满底层；同时让 slide 兜底白底透明，露出背景
+  // 重要：每次 buildEditor 都要重置 --slide-bg（之前 buildEditor 可能用 inline style 把它设成 transparent）
+  editor.style.removeProperty('--slide-bg');
+  const bgLayers = collectBgLayers(doc);
+  if(bgLayers.length){
+    editor.style.setProperty('--slide-bg', 'transparent');
+  }
+
   editor.innerHTML = "";
   const side = $("#side");
   side.innerHTML = "";
@@ -301,6 +498,13 @@ function buildEditor(doc){
     label.innerHTML = `第 <span class="pg">${i+1}</span> 页 · ${pg}`;
     const frame = document.createElement("div");
     frame.className = "slide-frame";
+    // 背景层（若有）：作为 frame 底层铺满，slide 内容在上层（z-index 已由 CSS 控制）
+    if(bgLayers.length){
+      const bgWrap = document.createElement("div");
+      bgWrap.className = "bg-layer";
+      bgLayers.forEach(b => bgWrap.appendChild(b.cloneNode(true)));
+      frame.appendChild(bgWrap);
+    }
     const clone = slide.cloneNode(true);
     clone.classList.add("active","visible");
     clone.setAttribute("contenteditable", "true");
@@ -560,11 +764,16 @@ $("#btn-export").addEventListener("click", ()=>{
   a.click();
 });
 // 导出 PPT：服务端渲染全部幻灯片 → 打包成 16:9 .pptx → 自动下载
+// export-mode 决定导出格式：editable（整页截图背景 + 文字可编辑文本框）/ image（高清整页截图，不可改字）
 $("#btn-export-pptx").addEventListener("click", async ()=>{
+  const mode = $("#export-mode").value || "editable";
   const r = await fetch("/api/export-pptx", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({file: currentFile})});
+    body: JSON.stringify({file: currentFile, mode})});
   const j = await r.json();
-  if(j.ok){ $("#p-title").textContent = "导出 PPT"; $("#progress").style.display="block"; pollExport(); }
+  if(j.ok){
+    $("#p-title").textContent = (mode === "image" ? "导出 PPT（高清整页图）" : "导出 PPT（可编辑版）");
+    $("#progress").style.display="block"; pollExport();
+  }
   else setStatus(j.msg||"导出未启动", "err");
 });
 function pollExport(){
@@ -601,6 +810,85 @@ function pollExport(){
 $("#btn-reload").addEventListener("click", ()=>{
   if(confirm("放弃当前所有未保存改动，从文件重新读取？")) loadFromServer();
 });
+// 上传到飞书云空间：当前 HTML（已保存版本）或已导出的 PPTX
+// 先判断本机是否已授权绑定飞书账号；未授权则弹出引导，授权后再重试
+function uploadToFeishu(kind){
+  const label = kind === "pptx" ? "PPTX" : "HTML";
+  setStatus(`正在检查飞书授权状态…`, "busy");
+  fetch("/api/feishu-auth").then(r=>r.json()).then(auth=>{
+    if(auth.bound){
+      doUploadFeishu(kind, label);
+    } else {
+      showAuthNeeded(auth, ()=> doUploadFeishu(kind, label));
+    }
+  }).catch(e=>{
+    // 检测接口异常也先弹引导，避免在「未授权」场景下误判成「已授权」直接上传失败
+    showAuthNeeded({bound:false, identity:"", hasDriveScope:false,
+      msg:"无法确认授权状态（检查接口异常）"}, ()=> doUploadFeishu(kind, label));
+  });
+}
+function doUploadFeishu(kind, label){
+  setStatus(`正在上传${label}到飞书云空间…`, "busy");
+  fetch("/api/upload-feishu", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({file: currentFile, kind})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok && d.url){
+        if(navigator.clipboard){ navigator.clipboard.writeText(d.url).catch(()=>{}); }
+        setStatus(`已上传到飞书云空间 ✓ <a href="${d.url}" target="_blank" rel="noopener">打开链接</a>（链接已复制）`, "ok", true);
+        window.open(d.url, "_blank");
+      } else {
+        // 上传接口自身的「未授权」类错误也兜底弹引导
+        if(/授权|未绑定|token|auth|lark-cli/i.test(d.msg||"")){
+          showAuthNeeded({bound:false, identity:"", hasDriveScope:false, msg:d.msg||""},
+            ()=> doUploadFeishu(kind, label));
+        } else {
+          setStatus("上传失败：" + (d.msg || "未知错误"), "err");
+          console.error(d.raw || d.msg);
+        }
+      }
+    }).catch(e=> setStatus("上传请求失败："+e, "err"));
+}
+// 授权引导模态框：展示原因 + 授权命令 + 复制 + 重试回调
+function showAuthNeeded(auth, onRetry){
+  const modal = document.getElementById("auth-modal");
+  const msg = document.getElementById("auth-msg");
+  const who = document.getElementById("auth-who");
+  let detail = auth.msg || "未绑定飞书账号";
+  if(auth.identity){ who.textContent = "当前身份：" + auth.identity; who.style.display = ""; }
+  else { who.textContent = ""; who.style.display = "none"; }
+  msg.textContent = "上传到飞书云空间需要本机已授权并绑定飞书账号。当前情况：" + detail +
+    "（授权只需做一次，之后即可直接上传）。";
+  modal.classList.add("open");
+  modal._onRetry = onRetry;
+}
+function hideAuthModal(){
+  document.getElementById("auth-modal").classList.remove("open");
+}
+$("#btn-up-html").addEventListener("click", ()=> uploadToFeishu("html"));
+$("#btn-up-pptx").addEventListener("click", ()=> uploadToFeishu("pptx"));
+$("#auth-close").addEventListener("click", hideAuthModal);
+$("#auth-copy").addEventListener("click", ()=>{
+  const cmd = document.getElementById("auth-cmd").textContent;
+  if(navigator.clipboard){ navigator.clipboard.writeText(cmd).then(
+    ()=> setStatus("已复制授权命令 ✓", "ok"), ()=> setStatus("复制失败，请手动复制", "err")); }
+  else { setStatus("当前环境不支持自动复制，请手动复制命令", "err"); }
+});
+$("#auth-retry").addEventListener("click", ()=>{
+  const cb = document.getElementById("auth-modal")._onRetry;
+  hideAuthModal();
+  if(cb) cb();
+});
+// 顶栏「更多 ▾」下拉菜单：点击展开/收起，点菜单内项或外部区域自动收起
+(function(){
+  const more = $("#btn-more");
+  const menu = $("#more-menu");
+  if(!more || !menu) return;
+  more.addEventListener("click", (e)=>{ e.stopPropagation(); menu.classList.toggle("open"); });
+  menu.addEventListener("click", (e)=>{ if(e.target.closest(".btn")) menu.classList.remove("open"); });
+  document.addEventListener("click", (e)=>{
+    if(!menu.contains(e.target) && e.target !== more) menu.classList.remove("open");
+  });
+})();
 $("#btn-history").addEventListener("click", openHistory);
 
 // 文件列表 / 切换
@@ -627,8 +915,7 @@ async function switchFile(rel){
   await loadFromServer(rel);
 }
 
-// 「打开文件」按钮 → 触发隐藏的 file input
-$("#btn-open").addEventListener("click", ()=> $("#file-input").click());
+// 「打开文件」label 用 <label for=file-input> 直接触发原生 file dialog（避开 JS .click() 被浏览器拦截）
 $("#file-input").addEventListener("change", async (e)=>{
   const file = e.target.files && e.target.files[0];
   if(!file) return;

@@ -4,14 +4,17 @@
 相比 render_preview.py（每页启停一次 Chrome，macOS 上反复启动极易被 updater / 进程残留卡死），
 本脚本只启动一次浏览器，逐页 deck.showSlide(i) + screenshot，稳定且更快。
 
-用法：python render_slides_pw.py [start] [end]   （默认 1..N，N=源文件 slide 数）
+用法：python render_slides_pw.py [SRC] [start] [end]   （默认 1..N，N=源文件 slide 数）
 依赖：playwright（指向系统 Chrome，无需下载 chromium）。
 """
 import sys, pathlib, subprocess, time, os
 
-DIR = pathlib.Path("/Users/fanshuai/Documents/搞钱集中营/12-FDE研究")
-SRC_DEFAULT = DIR / "FDE认知片子-瑞士现代-v2.html"
+# 默认源：当前工作目录下的片子（服务端调用时总传入绝对路径，覆盖此默认）
+SRC_DEFAULT = pathlib.Path.cwd() / "FDE认知片子-瑞士现代-v2.html"
+# 系统 Chrome（macOS）；不存在则回退 Playwright 自带 chromium（需 `playwright install chromium`）
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if not os.path.exists(CHROME):
+    CHROME = None
 
 def count_slides(src):
     return open(src, "r", encoding="utf-8").read().count('class="slide"')
@@ -25,6 +28,7 @@ def main():
         src = pathlib.Path(args[0])
         args = args[1:]
     SRC = src
+    WORK = SRC.parent  # 预览 PNG 与临时文件与源同目录
     n = count_slides(SRC)
     start = int(args[0]) if len(args) >= 1 else 1
     end = int(args[1]) if len(args) >= 2 else n
@@ -37,7 +41,7 @@ def main():
     import tempfile, re
     html = open(SRC, "r", encoding="utf-8").read()
     html = re.sub(r'<link[^>]*fonts\.(googleapis|gstatic)\.com[^>]*>', "", html)
-    tmpf = tempfile.NamedTemporaryFile(prefix="fde-deck-", suffix=".html", dir=str(DIR), delete=False)
+    tmpf = tempfile.NamedTemporaryFile(prefix="fde-deck-", suffix=".html", dir=str(WORK), delete=False)
     TMPSRC = pathlib.Path(tmpf.name)
     tmpf.close()
     TMPSRC.write_text(html, encoding="utf-8")
@@ -60,7 +64,7 @@ def main():
         for i in range(start - 1, end):
             page.evaluate(f"deck.showSlide({i})")
             page.wait_for_timeout(800)  # deck 的 reveal 过渡延迟最高 .6s，等 800ms 让所有元素稳定 + 字体回退到位
-            out = DIR / f"preview-P{i+1:02d}.png"
+            out = WORK / f"preview-P{i+1:02d}.png"
             page.screenshot(path=str(out), clip={"x": 0, "y": 0, "width": 1920, "height": 1080})
             print(f"P{i+1:02d} -> {out.name} ({out.stat().st_size}B)")
         browser.close()

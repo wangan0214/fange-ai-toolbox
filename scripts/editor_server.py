@@ -13,8 +13,9 @@
   GET  /api/history?file=  -> 列出该文件的历史快照
   GET  /api/history-file?file=&snap= -> 读取某个历史快照内容（预览/下载）
   POST /api/rollback       -> 把某个历史快照原子写回源文件（回滚前自动留快照）
+  POST /api/upload-feishu  -> 把当前 HTML 或已导出 PPTX 上传到飞书云空间（lark-cli drive +upload）
 
-纯本地 (127.0.0.1)，数据零外发。
+纯本地 (127.0.0.1)，数据零外发；仅「上传飞书云空间」会调用本机 lark-cli 与飞书交互。
 """
 import http.server
 import socketserver
@@ -27,6 +28,12 @@ import re
 import time
 import argparse
 from urllib.parse import quote, urlparse, parse_qs
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from export_editable_pptx import build_editable_pptx, build_image_pptx
+except Exception:
+    build_editable_pptx = None
+    build_image_pptx = None
 
 # ---------- 默认值（可被 CLI 参数覆盖） ----------
 _DEFAULT_ROOT = os.path.dirname(os.path.abspath(__file__))   # 编辑器所在目录的上级
@@ -64,6 +71,9 @@ RENDER_PW = os.path.join(ALLOWED_ROOT, "render_slides_pw.py")
 RENDER_DIR = ALLOWED_ROOT           # 预览 PNG 与源同目录
 HISTORY_ROOT = os.path.join(ALLOWED_ROOT, ".fde_history")
 ROOT = ALLOWED_ROOT                # 静态文件根（slide 配图）
+# 编辑器前端页面（editor.html）随 skill 走，固定在本文件同级 templates/，不依赖用户 decks 目录
+SKILL_SCRIPTS = os.path.dirname(os.path.abspath(__file__))   # scripts/
+EDITOR_HTML = os.path.join(SKILL_SCRIPTS, "..", "templates", "editor.html")
 
 # 渲染状态（进程内共享；字典里不放锁实例，避免 JSON 序列化失败）
 render_status = {"running": False, "total": 0, "done": 0, "error": "", "last": "",
@@ -222,11 +232,11 @@ def render_all_pw(file):
 def build_pptx(file):
     """把 preview-P01..P{n:02d}.png 打包成 16:9 的 .pptx，返回输出路径。"""
     from pptx import Presentation
-    from pptx.util import Inches
+    from pptx.util import Emu
     n = count_slides(file)
     prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
+    prs.slide_width = Emu(12192000)   # 锁定 16:9 / 1920×1080（标准宽屏，精确 EMU）
+    prs.slide_height = Emu(6858000)
     blank = prs.slide_layouts[6]
     for i in range(1, n + 1):
         img = os.path.join(RENDER_DIR, f"preview-P{i:02d}.png")
@@ -240,26 +250,38 @@ def build_pptx(file):
     return out
 
 
-def run_export(file):
+def run_export(file, mode="editable"):
     with render_lock:
         render_status["running"] = True
         render_status["error"] = ""
         render_status["cancelled"] = False
-        render_status["phase"] = "rendering"
+        render_status["phase"] = "building"
+        render_status["last"] = ""
         render_status["pptx_ready"] = False
         render_status["pptx_name"] = ""
     try:
-        ok = render_all_pw(file)
-        if ok and not render_status["cancelled"]:
-            with render_lock:
-                render_status["phase"] = "building"
-                render_status["last"] = "正在打包 PPT…"
-            out = build_pptx(file)
+        if mode == "image":
+            # 高清整页图片版：每页整页高分辨率截图直接铺满一页，无文本框（不可二次改字）
+            if build_image_pptx is not None:
+                out = build_image_pptx(file)
+            else:
+                render_all_pw(file)
+                out = build_pptx(file)
+            label = "高清整页图"
+        else:
+            # 可编辑版（默认）：整页截图背景 + 文字转可编辑文本框
+            if build_editable_pptx is not None:
+                out = build_editable_pptx(file)
+            else:
+                render_all_pw(file)
+                out = build_pptx(file)
+            label = "可编辑版"
+        if out and not render_status["cancelled"]:
             with render_lock:
                 render_status["phase"] = "pptx_done"
                 render_status["pptx_ready"] = True
                 render_status["pptx_name"] = os.path.basename(out)
-                render_status["last"] = "PPT 已生成"
+                render_status["last"] = f"PPT 已生成（{label}）"
         elif render_status["cancelled"]:
             with render_lock:
                 render_status["phase"] = ""
@@ -271,6 +293,119 @@ def run_export(file):
     finally:
         with render_lock:
             render_status["running"] = False
+
+
+def run_upload_feishu(rel, kind):
+    """上传当前 HTML 或已导出的 PPTX 到飞书云空间（Drive 根目录）。
+
+    返回 {ok, url, token, msg, raw}。url 为可打开的飞书云空间链接。
+    """
+    import shutil
+    if kind == "pptx":
+        name = base_of(rel) + ".pptx"
+        fp = os.path.join(RENDER_DIR, name)
+        if not os.path.isfile(fp):
+            return {"ok": False, "msg": "尚未导出 PPT，请先点「导出 PPT」", "raw": ""}
+    else:
+        fp = safe_abs(rel)
+        if not fp or not os.path.isfile(fp):
+            return {"ok": False, "msg": "源文件不存在", "raw": ""}
+    cli = shutil.which("lark-cli") or "lark-cli"
+    # lark-cli 要求 --file 为「当前目录下的相对路径」，故切到文件所在目录再传文件名
+    up_dir = os.path.dirname(fp)
+    up_name = os.path.basename(fp)
+    try:
+        proc = subprocess.run(
+            [cli, "drive", "+upload", "--file", up_name, "--as", "user"],
+            cwd=up_dir, capture_output=True, text=True, timeout=180)
+    except Exception as e:
+        return {"ok": False, "msg": f"调用 lark-cli 失败：{e}", "raw": ""}
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    url = token = ""
+    # 1) 优先解析 JSON（lark-cli 通常返回 {data:{url:...}} 之类）
+    try:
+        j = json.loads(proc.stdout.strip())
+        def _dig(o):
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    if k in ("url", "url_token", "file_token", "token") and isinstance(v, str) and v:
+                        return v
+                    r = _dig(v)
+                    if r:
+                        return r
+            elif isinstance(o, list):
+                for it in o:
+                    r = _dig(it)
+                    if r:
+                        return r
+            return None
+        found = _dig(j)
+        if found:
+            if re.search(r"feishu|larksuite", found):
+                url = found
+            else:
+                token = found
+    except Exception:
+        pass
+    # 2) 退而求其次：正则抓链接
+    if not url:
+        m = re.search(r"https?://[^\s\"'\\<>]+feishu\.cn[^\s\"'\\<>]*", out)
+        if not m:
+            m = re.search(r"https?://[^\s\"'\\<>]+larksuite\.cn[^\s\"'\\<>]*", out)
+        if m:
+            url = m.group(0)
+    ok = (proc.returncode == 0) and (bool(url) or bool(token))
+    if ok and not url and token:
+        url = f"https://www.feishu.cn/drive/home/{token}"
+    return {"ok": ok, "url": url, "token": token,
+            "msg": ("已上传到飞书云空间" if ok else "上传失败，详见 raw"),
+            "raw": out.strip()[-1600:]}
+
+
+def run_feishu_auth():
+    """检测本机 lark-cli 是否已授权飞书用户身份（且具备 drive:file:upload 上传权限）。
+
+    返回 {bound, identity, hasDriveScope, msg}。
+    - bound=True   → 可直接上传
+    - bound=False  → 前端应弹出激活/授权引导（让用户执行 `lark-cli auth login`）
+    """
+    import shutil, re
+    cli = shutil.which("lark-cli") or "lark-cli"
+    try:
+        proc = subprocess.run([cli, "auth", "status"],
+                              capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        return {"bound": False, "identity": "", "hasDriveScope": False,
+                "msg": f"未检测到 lark-cli：{e}（请先安装 lark-cli）"}
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    # 解析 JSON（容错：抓第一个 {...} 子串）
+    raw = out.strip()
+    j = {}
+    try:
+        j = json.loads(raw)
+    except Exception:
+        m = re.search(r"\{.*\}", raw, re.S)
+        if m:
+            try:
+                j = json.loads(m.group(0))
+            except Exception:
+                j = {}
+    user = (j.get("identities") or {}).get("user") or {}
+    if not user:
+        return {"bound": False, "identity": "",
+                "hasDriveScope": False,
+                "msg": "未绑定飞书用户身份（user identity 缺失），请先授权"}
+    if user.get("tokenStatus", "") != "valid" or user.get("status", "") != "ready":
+        return {"bound": False, "identity": user.get("userName", ""),
+                "hasDriveScope": False,
+                "msg": "飞书账号未处于有效授权状态，请重新授权"}
+    scope = user.get("scope", "") or ""
+    if "drive:file:upload" not in scope:
+        return {"bound": False, "identity": user.get("userName", ""),
+                "hasDriveScope": False,
+                "msg": "已授权但缺少 drive:file:upload 权限，无法上传到云空间"}
+    return {"bound": True, "identity": user.get("userName", ""),
+            "hasDriveScope": True, "msg": "已授权飞书账号"}
 
 
 def run_render(file):
@@ -302,6 +437,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", str(len(body)))
+        # 强制所有响应都不缓存（用户最痛的问题：硬刷都清不掉的 Chrome disk cache）
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.end_headers()
         self.wfile.write(body)
 
@@ -317,7 +456,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/editor.html"):
             try:
-                with open(os.path.join(ROOT, "fde_editor", "editor.html"), "r", encoding="utf-8") as f:
+                with open(EDITOR_HTML, "r", encoding="utf-8") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except Exception as e:
                 self._send(500, str(e))
@@ -365,6 +504,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with render_lock:
                 snap = {k: v for k, v in render_status.items() if k != "_proc"}
             self._send(200, json.dumps(snap))
+        elif self.path == "/api/feishu-auth":
+            self._send(200, json.dumps(run_feishu_auth(), ensure_ascii=False))
         elif self.path == "/api/download-pptx":
             self._serve_pptx()
         else:
@@ -437,6 +578,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send(200, json.dumps({"ok": True}))
         elif self.path == "/api/export-pptx":
             rel = data.get("file", DEFAULT_FILE)
+            mode = data.get("mode", "editable")
             fp = safe_abs(rel)
             if not fp:
                 self._send(400, json.dumps({"ok": False, "msg": "非法文件"}))
@@ -444,7 +586,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if render_status["running"]:
                 self._send(200, json.dumps({"ok": False, "msg": "任务进行中，请稍候"}))
                 return
-            t = threading.Thread(target=run_export, args=(fp,), daemon=True)
+            t = threading.Thread(target=run_export, args=(fp, mode), daemon=True)
             t.start()
             self._send(200, json.dumps({"ok": True, "msg": "已启动导出 PPT"}))
         elif self.path == "/api/rollback":
@@ -475,6 +617,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": True, "html": content}))
             except Exception as e:
                 self._send(500, json.dumps({"error": str(e)}))
+        elif self.path == "/api/upload-feishu":
+            rel = data.get("file", DEFAULT_FILE)
+            kind = data.get("kind", "html")
+            res = run_upload_feishu(rel, kind)
+            self._send(200, json.dumps(res, ensure_ascii=False))
         elif self.path == "/api/download-pptx":
             self._serve_pptx()
         else:
