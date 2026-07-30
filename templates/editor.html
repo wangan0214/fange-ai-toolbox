@@ -114,7 +114,14 @@
   /* 源背景装饰层（如 EP25 的 .bg-deco）：clone 进 frame 铺满底层，避免响应式源背景丢失。
      背景层元素原是 position:fixed（相对窗口），这里强制 absolute 让它相对 frame（而非 viewport）。
      关键：不能强制 inset:0!important，否则会盖住源 ::before/::after 的 top:-22vh/left:-10vw 等定位
-     ——EP25 装饰光晕偏移被吃成 0 就会只剩中央一个光晕。inset 由源 CSS 自己负责（多数背景层都自带 inset:0）。*/
+     ——EP25 装饰光晕偏移被吃成 0 就会只剩中央一个光晕。inset 由源 CSS 自己负责（多数背景层都自带 inset:0）。
+     ⚠️ 但 EP25 .bg-deco 的 ::before/::after 用 vw/vh 定位——源设计稿按视口 1280×800 算，注入时
+     fixViewportUnits 已把 vw/vh 转成「源像素」（62vw=793px）。但当 slide 在 frame 里被 transform:scale(sc) 缩小，
+     整个 slide 内的元素（含 ::before/::after）按 sc 缩放，所以圆在 frame 里视觉 = 793×sc = 595px（在 frame 960 宽里占 62%）。
+     ——这正是源设计稿比例。但如果 .bg-deco 是 fixed 全屏层 clone 到 frame 后被 position:absolute 强制，
+     它的 ::before/::after 相对 .bg-deco（铺满 frame 960×600）算，源 vw 是基于 1280 算的——sc 缩放后位置不对。
+     解决：给 .bg-deco 单独加 scale(sc)，让 ::before/::after 也按 sc 缩放定位。但 .bg-deco 已经被父 .slide-frame 缩放过。
+     实际看效果再决定。 */
   .slide-frame .bg-layer{position:absolute!important;inset:0!important;z-index:0!important;
     overflow:hidden;pointer-events:none;}
   .slide-frame .bg-layer > *{position:absolute!important;}
@@ -289,19 +296,21 @@ function fixViewportUnits(css){
 }
 
 // 收集源文件 <head> 里的 style / 外链样式（不含脚本），注入编辑器预览
+// ⚠️ 关键：必须直接拼接 textContent（裸 CSS 字符串），不能 push outerHTML ——
+// outerHTML 包含 <style>...</style> 标签，塞进 #orig-css.innerHTML 时浏览器按 HTML 解析，
+// 内嵌 <style> 元素在 HTML5 规范里被当作 rawText（不解析为样式），导致源 :root 变量
+// 全部失效（EP25 的 --bg1/--bg2 没生效 → .bg-deco background 透明 → 整页黑底）。
 function injectOrigCss(doc){
   const parts = [];
   doc.querySelectorAll('head style, head link[rel="stylesheet"]').forEach(el=>{
     if(el.tagName === "STYLE"){
-      const s = document.createElement("style");
-      s.textContent = fixViewportUnits(el.textContent);
-      parts.push(s.outerHTML);
+      parts.push(fixViewportUnits(el.textContent || ""));
     } else {
       parts.push(el.outerHTML);
     }
   });
   // 源 CSS 塞进 #orig-css（grid 能显示证明这条路径有效）。
-  $("#orig-css").innerHTML = parts.join("\n");
+  $("#orig-css").textContent = parts.join("\n");
   // Override 改用独立 <style> 直接挂到 head，避开 <style> innerHTML 嵌套解析的不确定性
   // ——保证 .reveal 兜底强制可见，与给 slide 加 .visible 双保险。
   let ov = document.getElementById("editor-override-css");
@@ -336,31 +345,53 @@ function injectOrigCss(doc){
 //   独立 iframe 里跑，不能用主 document（否则会被上一次 buildEditor 注入的源 CSS 污染）。
 // 高度：所有现代 HTML PPT 均为 16:9 设计稿，直接用 宽度 × 9/16 推算。
 function measureSrc(doc){
-  // 路径1：扫 doc 内联 CSS 找 .slide 的固定 width（FDE 1920、1280 等）
+  // 路径1：扫 doc 内联 CSS 找 .slide 块的固定 width（FDE 1920、1280 等）
+  // ⚠️ 关键：必须排除 max-width / min-width —— EP25 的 .slide-inner{max-width:1140px} 会让
+  // 旧正则（`\.slide[^}]*?width`）把 1140 误当成 slide 宽度。
+  // 实际 EP25 .slide 是 min-width:100vw 的视口设计稿，sw=1280——旧逻辑会错测成 1140×641，
+  // 进而 sc=0.84 把内容压缩、--edit-vw=1280 注入的源 vw 单位按真实 1280 算 → 圆(62vw=793px)
+  // 在 1140 frame 里占 70% 看着巨大，把 slide 内容盖住。修法：用「完整 .slide{...} 块」匹配，
+  // 块内再排除以 - 结尾的前缀（max-/min-），只接受独立 width:Npx。
   try{
     let foundW = null, foundH = null;
-    doc.querySelectorAll('style').forEach(st=>{
-      const t = st.textContent || '';
-      // 匹配 .slide / .deck-stage / :root 上的 width/height 固定像素值
-      const mW = t.match(/\.slide[^}]*?width\s*:\s*(\d+)px/i);
-      const mH = t.match(/\.slide[^}]*?height\s*:\s*(\d+)px/i);
-      if(mW && !foundW) foundW = parseInt(mW[1], 10);
-      if(mH && !foundH) foundH = parseInt(mH[1], 10);
-      const mdW = t.match(/\.deck-stage[^}]*?width\s*:\s*(\d+)px/i);
-      const mdH = t.match(/\.deck-stage[^}]*?height\s*:\s*(\d+)px/i);
-      if(mdW && !foundW) foundW = parseInt(mdW[1], 10);
-      if(mdH && !foundH) foundH = parseInt(mdH[1], 10);
-    });
+    const collectBlocks = (label) => {
+      const re = new RegExp('\\\\.' + label + '\\\\s*\\\\{[^}]+\\\\}', 'g');
+      const blocks = [];
+      doc.querySelectorAll('style').forEach(st => {
+        const t = st.textContent || '';
+        const m = t.match(re);
+        if(m) blocks.push(...m);
+      });
+      return blocks;
+    };
+    const matchIn = (label) => {
+      collectBlocks(label).forEach(b => {
+        if(!foundW){
+          // (?<!-)\\bwidth : 排除 -width（max-/min-），\\b 防止前缀字母粘连
+          const m = b.match(/(?<!-)\\bwidth\\s*:\\s*(\\d+)px/);
+          if(m) foundW = parseInt(m[1], 10);
+        }
+        if(!foundH){
+          const m = b.match(/(?<!-)\\bheight\\s*:\\s*(\\d+)px/);
+          if(m) foundH = parseInt(m[1], 10);
+        }
+      });
+    };
+    matchIn('slide');
+    if(!foundW || !foundH) matchIn('deck-stage');
     if(foundW && foundH) return {w: foundW, h: foundH};
     if(foundW) return {w: foundW, h: Math.round(foundW * 9 / 16)};
   }catch(e){}
   // 路径2：独立 iframe 测 probe（避开主 document 残留 CSS）
+  // 关键：给 iframe 设一个明确的"标准参考视口"（1280×800），让源 .slide{min-width:100vw; height:100vh} 自然撑到 1280×800。
+  // 用 width:1px iframe 会让 100vw=1px，测出来不准；用真实视口大小才符合源设计稿预期。
+  // 同时测 w 和 h（源不一定是 16:9，EP25 是 16:10=1280×800），不要默认推 9/16。
   const sample = doc.querySelector('.slide');
   if(!sample) return {w:1280, h:720};
-  let w = 1280;
+  let w = 1280, h = 720;
   try{
     const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:absolute;left:-99999px;top:0;width:1px;height:1px;border:0;visibility:hidden;';
+    iframe.style.cssText = 'position:absolute;left:-99999px;top:0;width:1280px;height:800px;border:0;visibility:hidden;';
     document.body.appendChild(iframe);
     const idoc = iframe.contentDocument;
     // 把 doc 的 head 全部 style 拷过去（仅这次测用，不污染主 document）
@@ -372,9 +403,9 @@ function measureSrc(doc){
       'bottom:auto!important;transform:none!important;float:none!important;margin:0!important;';
     idoc.body.appendChild(probe);
     w = probe.offsetWidth || 1280;
+    h = probe.offsetHeight || Math.round(w * 9 / 16);
     iframe.remove();
-  }catch(e){}
-  const h = Math.round(w * 9 / 16);
+  }catch(e){ console.log('[measureSrc] iframe error:', e.message); }
   return {w, h};
 }
 

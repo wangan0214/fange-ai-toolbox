@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.13
+version: 1.0.14
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -113,6 +113,28 @@ python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.14（2026-07-30）EP25 视口稿探测 + injectOrigCss 嵌套 style 不解析
+
+**两个根因，全是「视口响应式设计稿」（`.slide{min-width:100vw;height:100vh}`，无固定 width，源比例 16:10=1280×800）加载后整页黑底 / 巨大光晕盖住文字的问题，不是源 HTML 的问题：**
+
+1. **measureSrc 路径1 误测 1140×641（应为 1280×800）**
+   - 旧正则 `\.slide[^}]*?width` 会误中 EP25 的 `.slide-inner{max-width:1140px}`，把 1140 当 slide 宽。
+   - 修复：用「完整 `.slide{...}` 块」匹配 + 块内 `(?<!-)\bwidth` / `\bheight` 排除 `max-/min-` 前缀，只接受独立 `width:Npx`。扫不到再走路径2。
+   - 路径2 加固：iframe 视口由 `1px` 改成 `1280×800`，让 `.slide{min-width:100vw}` 自然撑到 1280；同时**实测 `offsetWidth` 和 `offsetHeight`**，不再硬编码 `h=Math.round(w*9/16)`（EP25 是 16:10，强制 9/16 会推成 720 失真）。实测 EP25=1280×800。
+
+2. **injectOrigCss 嵌套 `<style>` 不解析 → 整页黑底（最致命视觉 bug）**
+   - 旧逻辑：`const s=document.createElement("style"); s.textContent=...; parts.push(s.outerHTML)`，再 `$("#orig-css").innerHTML=parts.join("\n")`。
+   - **问题**：`s.outerHTML` 含 `<style>...</style>` 标签，塞进 `#orig-css.innerHTML` 时浏览器按 HTML 解析，内嵌 `<style>` 在 HTML5 规范里被当作 **rawText（不解析为样式）** → 源 `:root` 变量（`--bg1/--bg2`）全失效 → `.bg-deco` 的 `background:radial-gradient(...)` 解析为透明 → 整页黑底、`.bg-deco` 光晕圆消失/错位。
+   - 修复：直接 `parts.push(fixViewportUnits(el.textContent || ""))` 收集裸 CSS 字符串，再 `$("#orig-css").textContent = parts.join("\n")` 整体注入。`<link rel=stylesheet>` 仍用 `outerHTML`（合法）。
+
+**回归范围**（v1.0.14 修复后实测，4 场景全过）：
+- EP25 视口稿（1280×800）：sw=1280, sh=800, sc=0.7500, rootBg1=#FFF7F1（浅米色渐变底生效）, 光晕圆比例正确、文字完整 ✓
+- 切 v1.3 (1280×720) → 切瑞士现代 (1920×1080, sc=0.5, slideBg=白) → 回 EP25 (1280×800, rootBg1=#FFF7F1)：跨文件切换无 CSS 污染 / inline 残留 ✓
+- v1.0.13 的 FDE 修复未被破坏（瑞士现代 sw=1920, sc=0.5 不变） ✓
+- 截图核对：EP25 P1/P2/P3 与源设计稿视觉一致（浅米色 + 橙色光晕 + 黑字 + 卡片完整）
+
+**为什么之前没暴露**：v1.0.13 只覆盖了「FDE 等固定 width 稿」的跨文件 CSS 污染与 slide-bg 残留；EP25 这类**无固定 width 的视口稿**会走路径1 误中 max-width，且整页黑底的根因是 injectOrigCss 的 outerHTML 嵌套陷阱——这是所有"源 CSS 走 innerHTML 注入 preview 容器"场景的通用坑。
 
 ### v1.0.13（2026-07-30）跨文件尺寸探测 + slide-bg 重置
 
