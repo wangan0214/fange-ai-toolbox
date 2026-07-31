@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.16
+version: 1.0.17
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -113,6 +113,26 @@ python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.17（2026-07-31）样式模式（Properties 面板）——点选元素改位置/尺寸/transform
+
+**动机**：用户问"如果我要拖动色块位置，目前怎么操作"——之前编辑器只能改文字，位置/尺寸只能改源 HTML。v1 加"样式模式"：点画布元素 → 右侧浮窗显示/编辑 top/left/width/height/transform/font-size/color/background，inline style 写回元素；保存时序列化（RAW.replace 每页 innerHTML）自动带回源文件。
+
+**关键设计**：
+- 顶栏「更多」加 `📐 样式模式` toggle；开启时自动 zoom 到当前页（精确点击必须 1:1）
+- 画布元素 hover 显示橙色虚线轮廓，点选红实线；面板输入是**源设计稿像素**（FDE 1920×1080 坐标），画布自动按 `--sc` 缩放显示
+- 关键铁律：**读/写 `element.style.*` 字符串，不用 getComputedStyle**——因为画布 `transform:scale(var(--sc))` 让 getComputedStyle 拿到的是「画布显示像素」，而 element.style.left 是「源设计稿像素」（写什么就是什么，不受 transform 影响）。混淆两者会导致改值偏离预期。
+- 选中 static 元素：top/left 暂时空（不生效），但有一键"⊕ 设为 absolute"按钮（自动用当前 offsetTop/offsetLeft 填 top/left，再让用户调）
+- Esc 两段式：1 次取消选中、2 次退出样式模式
+- `save()` 加 try-catch 包 buildHtml（序列化失败有友好提示，不卡死）
+
+**回归**：EP25 P1 h1.rise 改 left=300, top=200 → element inline style 正确写入 `position:absolute; top:200px; left:300px;` → 保存 → 源文件含 position:absolute ✓
+
+### v1.0.16（2026-07-30）顶栏品牌字"帆哥的…编辑器"在深色底上看不见
+
+**根因**：`#topbar h1` 没显式 color → 继承 body 的 `var(--ink,#0a0a0a)` 黑色，与 topbar `background:var(--ui-panel)=#1c1c22` 形成黑底黑字；只有 `.accent{color:var(--red)}` 的"PPT"可见。**修法**：h1 显式 `color:var(--ui-text)=#eef0f3`，1 行 CSS。
+
+**通用教训**：顶栏/工具栏等所有直接放在深色 panel 里的文字元素，颜色必须显式声明 `color:var(--ui-text)`，不能依赖 body 继承——继承链上 body 用了 `var(--ink)`（深色文档用的），而 topbar 是深底亮字，继承反过来了。
 
 ### v1.0.15（2026-07-30）顶栏视口比例下拉（响应式稿关键）
 

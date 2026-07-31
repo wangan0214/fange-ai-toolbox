@@ -182,6 +182,49 @@
     #status{min-width:120px;font-size:11px;}
   }
 </style>
+<style>
+  /* 样式模式（Properties 面板）——点选元素 + 改 top/left/width/height/transform */
+  body.style-mode .slide-frame .slide,
+  body.style-mode .slide-frame .slide *{cursor:default!important;}
+  body.style-mode .slide-frame .slide *:hover{outline:1px dashed rgba(255,51,0,.55)!important;outline-offset:-1px;}
+  body.style-mode .slide-frame .slide .__picked{outline:2px solid var(--red)!important;outline-offset:-2px;}
+  body.style-mode .slide-frame{user-select:none;}
+  /* 样式模式开启时，画布不响应 contenteditable 文字输入（避免点选触发文字编辑） */
+  body.style-mode .slide-frame [contenteditable]{caret-color:transparent!important;}
+  body.style-mode .slide-frame [contenteditable]:focus{outline:none;}
+  /* 顶栏「样式模式」按钮高亮 */
+  body.style-mode #btn-style-mode{border-color:var(--red);color:var(--red);background:#2a0a0a;}
+  /* 样式面板（右侧浮窗） */
+  #style-panel{position:fixed;right:14px;top:64px;width:260px;background:var(--ui-panel);border:1px solid var(--ui-line);
+    border-radius:10px;padding:12px 14px;z-index:50;box-shadow:0 8px 32px rgba(0,0,0,.5);font-size:12px;color:var(--ui-text);display:none;}
+  #style-panel.open{display:block;}
+  #style-panel h4{margin:0 0 8px;font-size:12px;color:var(--ui-muted);font-weight:600;display:flex;align-items:center;gap:6px;}
+  #style-panel h4 .close{margin-left:auto;cursor:pointer;color:var(--ui-muted);font-size:18px;line-height:1;padding:0 4px;border-radius:4px;}
+  #style-panel h4 .close:hover{color:var(--red);background:#26262e;}
+  #style-panel .tag{display:inline-block;background:#2a2a30;color:var(--ui-text);padding:1px 6px;border-radius:3px;font-size:10px;
+    font-family:Menlo,Consolas,monospace;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}
+  #style-panel .row{display:grid;grid-template-columns:60px 1fr;gap:6px;align-items:center;margin:6px 0;}
+  #style-panel .row label{color:var(--ui-muted);font-size:11px;}
+  #style-panel .row input,#style-panel .row select{background:#0a0a0c;border:1px solid var(--ui-line);color:var(--ui-text);
+    padding:5px 7px;border-radius:5px;font-size:12px;width:100%;box-sizing:border-box;font-family:Menlo,Consolas,monospace;}
+  #style-panel .row input:focus,#style-panel .row select:focus{outline:none;border-color:var(--red);}
+  #style-panel .grid2{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:6px 0;}
+  #style-panel .grid2 .row{margin:0;}
+  #style-panel .grid2 label{font-size:10px;}
+  #style-panel .actions{display:flex;gap:6px;margin-top:10px;}
+  #style-panel .actions button{flex:1;background:#0a0a0c;border:1px solid var(--ui-line);
+    color:var(--ui-text);padding:6px 8px;border-radius:5px;font-size:11px;cursor:pointer;}
+  #style-panel .actions button:hover{border-color:var(--red);}
+  #style-panel .actions .danger{color:#ff8888;}
+  #style-panel .actions .danger:hover{background:#3a1010;border-color:#ff3030;color:#fff;}
+  #style-panel .hint{color:var(--ui-muted);font-size:10.5px;line-height:1.5;margin:8px 0 0;padding-top:8px;border-top:1px solid var(--ui-line);}
+  #style-panel .nobox{padding:14px;text-align:center;color:var(--ui-muted);font-size:11px;line-height:1.6;}
+  /* 提示横幅：样式模式首次进入 */
+  #style-mode-tip{position:fixed;left:50%;top:80px;transform:translateX(-50%);background:var(--red);color:#fff;
+    padding:8px 16px;border-radius:8px;font-size:13px;z-index:60;box-shadow:0 6px 20px rgba(0,0,0,.4);
+    animation:tip-fade 4s ease forwards;pointer-events:none;}
+  @keyframes tip-fade{0%{opacity:0;transform:translate(-50%,-10px);}10%,85%{opacity:1;transform:translate(-50%,0);}100%{opacity:0;transform:translate(-50%,-10px);}}
+</style>
 <!-- 源文件样式（由 JS 注入，仅用于编辑器内预览，不写回文件） -->
 <style id="orig-css"></style>
 </head>
@@ -214,6 +257,7 @@
       <button class="btn" id="btn-save-render">保存并渲染</button>
       <button class="btn" id="btn-render">仅重新渲染</button>
       <button class="btn" id="btn-zoom">放大编辑当前页</button>
+      <button class="btn" id="btn-style-mode" title="样式模式：点选元素改位置/尺寸/transform（不破坏文字编辑）">📐 样式模式</button>
       <button class="btn" id="btn-export">导出 HTML</button>
       <button class="btn" id="btn-history">历史</button>
       <button class="btn" id="btn-reload">放弃改动重读</button>
@@ -245,6 +289,18 @@
 </div>
 
 <div id="drop-hint">松开导入 .html</div>
+
+<!-- 样式模式右侧浮窗：选中元素后显示 top/left/width/height/transform -->
+<div id="style-panel">
+  <h4>
+    <span>📐 样式</span>
+    <span class="tag" id="sp-tag" title="当前选中元素的选择器">—</span>
+    <span class="close" id="sp-close" title="关闭样式面板（按 Esc 也可）">×</span>
+  </h4>
+  <div id="sp-body">
+    <!-- 动态填充 -->
+  </div>
+</div>
 
 <div id="history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;">
   <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:580px;max-height:82vh;overflow:auto;background:var(--ui-panel);border:1px solid var(--ui-line);border-radius:12px;padding:18px;">
@@ -705,7 +761,14 @@ function autosave(){
 // 保存 -> 后端写文件（带当前文件名）
 async function save(){
   setStatus("保存中…");
-  const html = buildHtml();
+  let html;
+  try{
+    html = buildHtml();
+  }catch(e){
+    setStatus("序列化失败: "+e.message+"（请用'放弃改动重读'回滚）", "err");
+    console.error("buildHtml error:", e);
+    return;
+  }
   try{
     const r = await fetch("/api/save", {
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -815,6 +878,264 @@ $("#btn-save").addEventListener("click", save);
 $("#btn-render").addEventListener("click", startRender);
 $("#btn-zoom").addEventListener("click", toggleZoom);
 $("#btn-save-render").addEventListener("click", async ()=>{ await save(); await startRender(); });
+
+// ========= 样式模式（Properties 面板） =========
+// 状态
+let styleMode = false;     // 样式模式开关
+let pickedEl = null;       // 当前选中的画布元素（来自 .slide clone）
+let styleDirty = false;    // 样式改了（提示用户需保存）
+
+function showStyleTip(msg){
+  const old = document.getElementById("style-mode-tip");
+  if(old) old.remove();
+  const el = document.createElement("div");
+  el.id = "style-mode-tip";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 4000);
+}
+
+// 提取元素的「源设计稿坐标系」数值（top/left/width/height/transform）
+// 关键：编辑器画布用了 transform:scale(var(--sc))，getComputedStyle 读出来的 left/width 是「画布显示像素」
+// 而 element.style.left 是「源设计稿像素」（写什么就是什么，不受 transform 影响）。
+// 因此面板编辑要读/写 element.style.* 字符串，不要用 getComputedStyle。
+function readElStyle(el){
+  const cs = el.style;
+  const parse = (s) => {
+    s = (s || "").trim();
+    if(!s) return null;
+    const m = s.match(/^(-?\d+(?:\.\d+)?)(px|%|vw|vh|em|rem)?$/);
+    return m ? {num: parseFloat(m[1]), unit: m[2] || "px"} : null;
+  };
+  return {
+    position: cs.position || getComputedStyle(el).position,
+    top:    parse(cs.top),
+    left:   parse(cs.left),
+    right:  parse(cs.right),
+    bottom: parse(cs.bottom),
+    width:  parse(cs.width),
+    height: parse(cs.height),
+    transform: cs.transform || "",
+    color: cs.color || "",
+    background: cs.background || cs.backgroundColor || "",
+    fontSize: parse(cs.fontSize)
+  };
+}
+function writeElStyle(el, key, val){
+  // 数字输入：若带单位则原样写，否则默认 px
+  if(val === "" || val === null || val === undefined){
+    el.style.removeProperty(key);
+  } else if(typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val.trim())){
+    el.style.setProperty(key, val.trim() + "px");
+  } else {
+    el.style.setProperty(key, val);
+  }
+}
+function elSelector(el){
+  if(!el) return "—";
+  let s = el.tagName.toLowerCase();
+  if(el.id) s += "#" + el.id;
+  if(el.className && typeof el.className === "string"){
+    const cls = el.className.trim().split(/\s+/).slice(0, 2).join(".");
+    if(cls) s += "." + cls;
+  }
+  return s;
+}
+
+function openStylePanel(){
+  $("#style-panel").classList.add("open");
+}
+function closeStylePanel(){
+  $("#style-panel").classList.remove("open");
+  if(pickedEl){
+    pickedEl.classList.remove("__picked");
+    pickedEl = null;
+  }
+}
+function renderStylePanel(){
+  const body = $("#sp-body");
+  if(!pickedEl){
+    body.innerHTML = '<div class="nobox">未选中元素<br>点画布上的任意元素开始编辑</div>';
+    return;
+  }
+  const s = readElStyle(pickedEl);
+  const tag = elSelector(pickedEl);
+  $("#sp-tag").textContent = tag;
+  $("#sp-tag").title = tag;
+  const isAbs = s.position === "absolute" || s.position === "fixed";
+  const num = (v) => v ? v.num : "";
+  const unit = (v) => v ? v.unit : "px";
+  body.innerHTML = `
+    <div class="row">
+      <label>position</label>
+      <select class="sp-pos">
+        <option value="static"${s.position==="static"?" selected":""}>static</option>
+        <option value="relative"${s.position==="relative"?" selected":""}>relative</option>
+        <option value="absolute"${s.position==="absolute"?" selected":""}>absolute</option>
+        <option value="fixed"${s.position==="fixed"?" selected":""}>fixed</option>
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="row"><label>top (${unit(s.top)})</label><input class="sp-top" type="number" value="${num(s.top)}" placeholder="auto"></div>
+      <div class="row"><label>left (${unit(s.left)})</label><input class="sp-left" type="number" value="${num(s.left)}" placeholder="auto"></div>
+    </div>
+    <div class="grid2">
+      <div class="row"><label>width (${unit(s.width)})</label><input class="sp-width" type="number" value="${num(s.width)}" placeholder="auto"></div>
+      <div class="row"><label>height (${unit(s.height)})</label><input class="sp-height" type="number" value="${num(s.height)}" placeholder="auto"></div>
+    </div>
+    <div class="row">
+      <label>transform</label>
+      <input class="sp-transform" type="text" value="${s.transform.replace(/"/g,'&quot;')}" placeholder="例如 translate(-50%,-50%)">
+    </div>
+    <div class="row">
+      <label>font-size</label>
+      <input class="sp-font" type="number" value="${num(s.fontSize)}" placeholder="auto">
+    </div>
+    <div class="row">
+      <label>color</label>
+      <input class="sp-color" type="text" value="${s.color}" placeholder="例如 #ff3300 / rgb(...)">
+    </div>
+    <div class="row">
+      <label>bg</label>
+      <input class="sp-bg" type="text" value="${s.background}" placeholder="例如 #fff / linear-gradient(...)">
+    </div>
+    <div class="actions">
+      <button class="sp-reset" title="清掉所有 inline style，回到源 CSS 默认">↺ 重置</button>
+      <button class="sp-make-abs danger" title="若 top/left 无效，先点这个把元素改 absolute 定位"${isAbs?' disabled':''}>${isAbs?'已是 absolute':'⊕ 设为 absolute'}</button>
+    </div>
+    <div class="hint">
+      💡 改完数值后点空白处或 Tab 失焦生效。<br>
+      坐标是<strong>源设计稿像素</strong>（如 FDE 1920×1080），编辑器画布会自动按比例缩放显示。<br>
+      样式改动只在<strong>保存</strong>时写回源 HTML 文件。
+      ${!isAbs && (s.top || s.left) ? '<br><span style="color:#ff8888;">⚠ 该元素非 absolute/fixed，top/left 可能不生效</span>' : ''}
+    </div>
+  `;
+  // 绑定 input 实时回写
+  const bind = (sel, key, isPx=true) => {
+    const el = body.querySelector(sel);
+    if(!el) return;
+    el.addEventListener("change", ()=>{
+      const v = el.value;
+      writeElStyle(pickedEl, key, v);
+      styleDirty = true;
+      setStatus("样式已改（未保存）", "ok");
+    });
+  };
+  bind(".sp-top", "top");
+  bind(".sp-left", "left");
+  bind(".sp-width", "width");
+  bind(".sp-height", "height");
+  bind(".sp-font", "fontSize");
+  body.querySelector(".sp-pos").addEventListener("change", (e)=>{
+    pickedEl.style.position = e.target.value;
+    styleDirty = true;
+    renderStylePanel();
+    setStatus("样式已改（未保存）", "ok");
+  });
+  body.querySelector(".sp-transform").addEventListener("change", (e)=>{
+    writeElStyle(pickedEl, "transform", e.target.value);
+    styleDirty = true;
+    setStatus("样式已改（未保存）", "ok");
+  });
+  body.querySelector(".sp-color").addEventListener("change", (e)=>{
+    writeElStyle(pickedEl, "color", e.target.value);
+    styleDirty = true;
+  });
+  body.querySelector(".sp-bg").addEventListener("change", (e)=>{
+    const v = e.target.value;
+    if(/^#[0-9a-f]{3,8}$/i.test(v) || /^rgb/i.test(v)){
+      pickedEl.style.background = v;
+    } else {
+      pickedEl.style.background = v;
+    }
+    styleDirty = true;
+  });
+  body.querySelector(".sp-reset").addEventListener("click", ()=>{
+    if(!pickedEl) return;
+    if(!confirm("清掉该元素所有 inline style，回到源 CSS 默认？")) return;
+    pickedEl.removeAttribute("style");
+    styleDirty = true;
+    renderStylePanel();
+    setStatus("已清 inline style", "ok");
+  });
+  const absBtn = body.querySelector(".sp-make-abs");
+  if(!absBtn.disabled){
+    absBtn.addEventListener("click", ()=>{
+      pickedEl.style.position = "absolute";
+      pickedEl.style.top = (pickedEl.offsetTop || 0) + "px";
+      pickedEl.style.left = (pickedEl.offsetLeft || 0) + "px";
+      styleDirty = true;
+      renderStylePanel();
+      setStatus("已设为 absolute", "ok");
+    });
+  }
+}
+
+function pickEl(el){
+  if(pickedEl) pickedEl.classList.remove("__picked");
+  pickedEl = el;
+  if(pickedEl) pickedEl.classList.add("__picked");
+  renderStylePanel();
+  openStylePanel();
+}
+
+function enterStyleMode(){
+  styleMode = true;
+  document.body.classList.add("style-mode");
+  showStyleTip("📐 样式模式开启 — 点画布元素选中，点空白处取消选中，Esc 退出");
+  // 样式模式必须在 1:1 缩放下才能精确点击——若当前是缩略图模式，自动 zoom 到当前页
+  if(!document.body.classList.contains("edit-mode")){
+    toggleZoom();
+  } else if(!document.querySelector(".slide-wrap.zoomed")){
+    applyZoom(currentIndex >= 0 ? currentIndex : 0);
+  }
+  // 绑定全局 click（事件代理在 #editor）
+  $("#editor").addEventListener("click", styleModeClick, true);
+}
+function exitStyleMode(){
+  styleMode = false;
+  document.body.classList.remove("style-mode");
+  closeStylePanel();
+  $("#editor").removeEventListener("click", styleModeClick, true);
+  setStatus("样式模式已退出", "ok");
+}
+function styleModeClick(e){
+  if(!styleMode) return;
+  // 点 #editor 空白处 → 取消选中（但点 .slide-frame 自身不算）
+  if(e.target.closest("#style-panel")) return;     // 面板内不拦截
+  if(!e.target.closest(".slide")){
+    // 点画布外（编辑器滚动区空白）→ 取消选中
+    if(pickedEl) pickEl(null);
+    return;
+  }
+  // 在 .slide 内点中一个元素 → 选中
+  e.preventDefault();
+  e.stopPropagation();
+  // 找到最里层非空 block 元素（避开纯文字节点）
+  let el = e.target;
+  // 若点到的是 .bg-deco / .slide-inner 等只读层，跳过
+  if(el.closest(".bg-layer")){
+    setStatus("背景装饰层不建议改位置（影响响应式布局）", "warn");
+    return;
+  }
+  pickEl(el);
+}
+
+$("#btn-style-mode").addEventListener("click", ()=>{
+  if(styleMode) exitStyleMode();
+  else enterStyleMode();
+});
+$("#sp-close").addEventListener("click", ()=>{ closeStylePanel(); });
+
+// Esc 退出样式模式 / 取消选中
+document.addEventListener("keydown", (e)=>{
+  if(e.key === "Escape"){
+    if(styleMode){
+      if(pickedEl) pickEl(null);
+      else exitStyleMode();
+    }
+  }
+});
 $("#btn-export").addEventListener("click", ()=>{
   const blob = new Blob([buildHtml()], {type:"text/html"});
   const a = document.createElement("a");
