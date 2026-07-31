@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.15
+version: 1.0.16
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
