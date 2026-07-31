@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.17
+version: 1.0.18
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -113,6 +113,20 @@ python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.18（2026-07-31）画布直接拖拽 + 自动对齐辅助线（WYSIWYG）
+
+**动机**：v1.0.17 的 Properties 面板（数字输入框）被用户明确否决——"不能拖拽式的交互吗？所见即所得嘛，然后做好自动的对齐不行吗？你这个交互方式我不太能接受"。本版把样式模式从"填数字"改成真正的鼠标拖拽。
+
+**实现要点**：
+- `#editor` 上挂 mousedown（capture）→ 选中元素 + 准备拖拽；window 挂 mousemove/mouseup。元素非 absolute 时，第一次移动自动用 `offsetLeft/offsetTop` 转 absolute（保持原位不跳）。
+- 坐标全部在**源设计稿像素空间**做（mouse delta / sc），再通过 `offOriginX = startOffsetLeft − startSrcBox.left` 转回 offsetParent 空间写 `element.style.left/top`。**铁律**：不要用 getComputedStyle 读画布显示像素（会被 transform:scale 污染）。
+- **自动吸附（阈值 8 源像素）**：遍历被拖元素的 left/center/right × 所有目标的 left/center/right（包括 slide 自身 0/中心/100% + 其他可见元素的边/中），取距离最小者吸附。画一条贯穿画布的 1.5px 红线作为视觉反馈。
+- **buildHtml 序列化前剥离** `__drag-guide` 元素和 `__picked/__dragging` class，确保临时标记不写回源文件。
+
+**附带修一个 EP25 保存崩溃 bug**：`buildHtml` 的 `unitRe` 正则写死 `<section class="slide"[^>]*>`，要求 class 紧跟 `<section` 且值为 `"slide"`。但 EP25 P1 是 `<section class="slide active">`，class 含额外修饰类，正则匹配不到，导致 `matches.length` 比 `order.length` 少一页 → `matches[orig]` undefined → 保存崩溃。修：用 `<section\b[^>]*\bclass=["'][^"']*slide[^"']*["'][^>]*>` 兼容任意属性顺序和 class 值。
+
+**回归**：EP25 h1.rise.d2 拖到画面中部，X 自动吸附到画面水平中线 640（sw/2），Y 吸附到附近元素 top 197；buildHtml 输出 18975 字节，零临时 class。
 
 ### v1.0.17（2026-07-31）样式模式（Properties 面板）——点选元素改位置/尺寸/transform
 

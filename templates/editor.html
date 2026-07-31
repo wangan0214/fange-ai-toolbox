@@ -192,6 +192,19 @@
   /* 样式模式开启时，画布不响应 contenteditable 文字输入（避免点选触发文字编辑） */
   body.style-mode .slide-frame [contenteditable]{caret-color:transparent!important;}
   body.style-mode .slide-frame [contenteditable]:focus{outline:none;}
+  /* 拖拽光标：画布内所有元素可抓，选中后变 grabbing */
+  body.style-mode .slide-frame .slide,
+  body.style-mode .slide-frame .slide *{cursor:grab!important;}
+  body.style-mode .slide-frame.dragging,
+  body.style-mode .slide-frame.dragging .slide,
+  body.style-mode .slide-frame.dragging .slide *{cursor:grabbing!important;}
+  body.style-mode .slide-frame .slide *.__picked{cursor:grabbing!important;}
+  /* 拖拽时的对齐辅助线（画在 .slide 内，随 sc 自动缩放） */
+  .slide .__drag-guide{position:absolute;background:var(--red);z-index:60;pointer-events:none;opacity:.95;}
+  .slide .__drag-guide.x{width:1.5px;top:0;bottom:0;}
+  .slide .__drag-guide.y{height:1.5px;left:0;right:0;}
+  /* 拖拽时选中元素轻微抬升，提示正在移动 */
+  .slide .__picked.__dragging{box-shadow:0 0 0 9999px rgba(0,0,0,0)!important;filter:brightness(1.04);}
   /* 顶栏「样式模式」按钮高亮 */
   body.style-mode #btn-style-mode{border-color:var(--red);color:var(--red);background:#2a0a0a;}
   /* 样式面板（右侧浮窗） */
@@ -652,7 +665,10 @@ function buildEditor(doc){
 // 仅把 <section class="slide"> 块按【当前显示顺序 order】重组，每块内部内容替换为用户改后的 innerHTML。
 // 每个 section 前导的「<!-- ==== Pxx ==== -->」注释随块一起移动，保持源码标注不丢。
 function buildHtml(){
-  const unitRe = /(<!--[\s\S]*?-->)?\s*(<section class="slide"[^>]*>)([\s\S]*?)(<\/section>)/g;
+  // 注意：class 不一定紧跟 <section，也可能 <section id=".." class="slide">；且 class 值可能是
+  // "slide active"（带额外修饰类）。正则必须匹配「任意属性顺序 + class 含 slide 一词」，而非写死
+  // `<section class="slide"`（那样会漏掉 <section class="slide active"> 等，导致 matches 比 order 少 → 越界）。
+  const unitRe = /(<!--[\s\S]*?-->)?\s*(<section\b[^>]*\bclass=["'][^"']*slide[^"']*["'][^>]*>)([\s\S]*?)(<\/section>)/g;
   const matches = [];
   let um;
   while((um = unitRe.exec(RAW)) !== null){
@@ -668,7 +684,14 @@ function buildHtml(){
   for(let dp = 0; dp < order.length; dp++){
     const orig = order[dp];  // 该显示位置对应的【原始】<section> 索引
     const u = matches[orig];
-    const editedInner = (editedSlides[dp] && editedSlides[dp].innerHTML) || u.inner;
+    let editedInner = u.inner;
+    if(editedSlides[dp]){
+      // 序列化前先剥离拖拽辅助线 / 临时选中 class，避免写回源文件
+      const tmp = editedSlides[dp].cloneNode(true);
+      tmp.querySelectorAll(".__drag-guide").forEach(g=>g.remove());
+      tmp.querySelectorAll(".__picked, .__dragging").forEach(e=>e.classList.remove("__picked", "__dragging"));
+      editedInner = tmp.innerHTML;
+    }
     body += u.comment + u.open + editedInner + u.close + "\n";
   }
   return pre + body + post;
@@ -1004,9 +1027,9 @@ function renderStylePanel(){
       <button class="sp-make-abs danger" title="若 top/left 无效，先点这个把元素改 absolute 定位"${isAbs?' disabled':''}>${isAbs?'已是 absolute':'⊕ 设为 absolute'}</button>
     </div>
     <div class="hint">
-      💡 改完数值后点空白处或 Tab 失焦生效。<br>
-      坐标是<strong>源设计稿像素</strong>（如 FDE 1920×1080），编辑器画布会自动按比例缩放显示。<br>
-      样式改动只在<strong>保存</strong>时写回源 HTML 文件。
+      ✊ <strong>直接在画布上拖动元素</strong>即可移动，靠近其他元素 / 水平中线 / 垂直中线 / 边缘会自动吸附并显示红色辅助线。<br>
+      也可用下方数值微调（源设计稿像素，如 FDE 1920×1080，画布已自动缩放显示）。<br>
+      样式改动只在<strong>保存（⌘S）</strong>时写回源 HTML 文件。
       ${!isAbs && (s.top || s.left) ? '<br><span style="color:#ff8888;">⚠ 该元素非 absolute/fixed，top/left 可能不生效</span>' : ''}
     </div>
   `;
@@ -1082,7 +1105,7 @@ function pickEl(el){
 function enterStyleMode(){
   styleMode = true;
   document.body.classList.add("style-mode");
-  showStyleTip("📐 样式模式开启 — 点画布元素选中，点空白处取消选中，Esc 退出");
+  showStyleTip("📐 样式模式 — 直接在画布上拖动元素即可移动，靠近其他元素 / 中线 / 边缘会自动吸附对齐。Esc 退出");
   // 样式模式必须在 1:1 缩放下才能精确点击——若当前是缩略图模式，自动 zoom 到当前页
   if(!document.body.classList.contains("edit-mode")){
     toggleZoom();
@@ -1119,6 +1142,165 @@ function styleModeClick(e){
     return;
   }
   pickEl(el);
+}
+
+/* ===================== 拖拽移动 + 自动对齐（所见即所得） ===================== */
+/* 核心：编辑器画布用了 transform:scale(var(--sc))，鼠标位移是「显示像素」，
+   必须除以 sc 才是「源设计稿像素」。所有坐标计算都在源像素空间做，
+   写回 element.style.left/top（源像素，不被 transform 影响）。 */
+let drag = null;   // 拖拽状态
+
+function slideScale(slide){
+  // slide 是 transform:scale(sc)，offsetWidth = 源宽(sw)，rect.width = 显示宽 = sw*sc
+  const ow = slide.offsetWidth;
+  return ow ? slide.getBoundingClientRect().width / ow : 1;
+}
+// 元素在「源像素空间」相对 .slide 的盒子（不受 transform 影响）
+function srcBox(el, slide, sc){
+  const sr = slide.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return {
+    left:(r.left-sr.left)/sc, top:(r.top-sr.top)/sc,
+    width:r.width/sc, height:r.height/sc,
+    right:(r.right-sr.left)/sc, bottom:(r.bottom-sr.top)/sc,
+    cx:(r.left+r.width/2-sr.left)/sc, cy:(r.top+r.height/2-sr.top)/sc
+  };
+}
+function ensureAbsolute(el){
+  const cs = getComputedStyle(el);
+  if(cs.position==="absolute" || cs.position==="fixed") return false;
+  el.style.position = "absolute";
+  el.style.left = el.offsetLeft + "px";
+  el.style.top  = el.offsetTop + "px";
+  return true;
+}
+function clearGuides(slide){ slide.querySelectorAll(".__drag-guide").forEach(g=>g.remove()); }
+function addGuide(slide, axis, pos){
+  const g = document.createElement("div");
+  g.className = "__drag-guide " + axis;
+  if(axis==="x") g.style.left = pos+"px"; else g.style.top = pos+"px";
+  slide.appendChild(g);
+}
+// 把一个静态/相对元素刚转成 absolute 后，基准需重测（位置不变，但 offset/ src 关系要刷新）
+function refreshDragBase(){
+  const sBox = srcBox(drag.el, drag.slide, drag.sc);
+  drag.startSrcBox = sBox;
+  drag.startOffsetLeft = drag.el.offsetLeft;
+  drag.startOffsetTop  = drag.el.offsetTop;
+  drag.offOriginX = drag.startOffsetLeft - sBox.left;
+  drag.offOriginY = drag.startOffsetTop  - sBox.top;
+}
+
+// mousedown：选中元素 + 准备拖拽（实际转 absolute 推迟到第一次移动，避免误触改 style）
+$("#editor").addEventListener("mousedown", (e)=>{
+  if(!styleMode) return;
+  if(e.target.closest("#style-panel")) return;
+  const slide = e.target.closest(".slide");
+  if(!slide) return;
+  // 点 .slide / .slide-inner 自身（空白处）不拖
+  if(e.target===slide || (e.target.classList && (e.target.classList.contains("slide-inner") || e.target.classList.contains("slide-wrap")))){
+    return;
+  }
+  if(e.target.closest(".bg-layer")){
+    setStatus("背景装饰层不建议改位置（影响响应式布局）", "warn");
+    return;
+  }
+  e.preventDefault();   // 阻止文字选择 / 原生拖拽
+  pickEl(e.target);
+  const cs = getComputedStyle(e.target);
+  drag = {
+    el: e.target, slide,
+    sc: slideScale(slide),
+    startMouseX: e.clientX, startMouseY: e.clientY,
+    startSrcBox: srcBox(e.target, slide, slideScale(slide)),
+    startOffsetLeft: e.target.offsetLeft, startOffsetTop: e.target.offsetTop,
+    offOriginX: 0, offOriginY: 0,
+    isAbs: (cs.position==="absolute" || cs.position==="fixed"),
+    ensured: false, moved: false
+  };
+  drag.offOriginX = drag.startOffsetLeft - drag.startSrcBox.left;
+  drag.offOriginY = drag.startOffsetTop  - drag.startSrcBox.top;
+  drag.el.classList.add("__dragging");
+  const frame = drag.slide.closest(".slide-frame");
+  if(frame) frame.classList.add("dragging");
+  window.addEventListener("mousemove", onDragMove);
+  window.addEventListener("mouseup", onDragUp);
+}, true);
+
+function onDragMove(e){
+  if(!drag) return;
+  const dxDisp = e.clientX - drag.startMouseX;
+  const dyDisp = e.clientY - drag.startMouseY;
+  if(!drag.moved && Math.hypot(dxDisp, dyDisp) > 3){ drag.moved = true; }
+  if(!drag.moved) return;
+  // 第一次真正移动时，若元素是 static/relative → 转 absolute 并刷新基准
+  if(!drag.ensured){
+    if(!drag.isAbs){ ensureAbsolute(drag.el); refreshDragBase(); }
+    drag.ensured = true;
+  }
+  const dxSrc = dxDisp / drag.sc;
+  const dySrc = dyDisp / drag.sc;
+  const b = drag.startSrcBox;
+  const curLeft = b.left + dxSrc, curTop = b.top + dySrc;
+  const curRight = curLeft + b.width, curBottom = curTop + b.height;
+  const curCx = curLeft + b.width/2, curCy = curTop + b.height/2;
+
+  // 收集对齐目标（源像素空间）
+  const SW = drag.slide.offsetWidth, SH = drag.slide.offsetHeight;
+  const tx=[0, SW/2, SW], ty=[0, SH/2, SH];
+  drag.slide.querySelectorAll("*").forEach(o=>{
+    if(o===drag.el) return;
+    if(o.classList && o.classList.contains("__drag-guide")) return;
+    if(o.closest && o.closest(".bg-layer")) return;
+    const r = o.getBoundingClientRect();
+    if(r.width<2 && r.height<2) return;
+    const sr = drag.slide.getBoundingClientRect(), sc = drag.sc;
+    const ol=(r.left-sr.left)/sc, ot=(r.top-sr.top)/sc, ow=r.width/sc, oh=r.height/sc;
+    tx.push(ol, ol+ow/2, ol+ow);
+    ty.push(ot, ot+oh/2, ot+oh);
+  });
+
+  const TH = 8;  // 吸附阈值（源像素）
+  // X 方向：比较 left/center/right 三条边，取最近目标
+  let bestX={d:TH+1}, gx=null;
+  [curLeft, curCx, curRight].forEach(a=> tx.forEach(t=>{ const d=Math.abs(a-t); if(d<bestX.d) bestX={d, anchor:a, t}; }));
+  let newLeft = curLeft;
+  if(bestX.d<=TH){ newLeft = curLeft + (bestX.t - bestX.anchor); gx = bestX.t; }
+  // Y 方向
+  let bestY={d:TH+1}, gy=null;
+  [curTop, curCy, curBottom].forEach(a=> ty.forEach(t=>{ const d=Math.abs(a-t); if(d<bestY.d) bestY={d, anchor:a, t}; }));
+  let newTop = curTop;
+  if(bestY.d<=TH){ newTop = curTop + (bestY.t - bestY.anchor); gy = bestY.t; }
+
+  // 写回 offsetParent 空间
+  drag.el.style.left = (newLeft + drag.offOriginX) + "px";
+  drag.el.style.top  = (newTop  + drag.offOriginY) + "px";
+
+  // 对齐辅助线
+  clearGuides(drag.slide);
+  if(gx!==null) addGuide(drag.slide, "x", gx);
+  if(gy!==null) addGuide(drag.slide, "y", gy);
+
+  // 实时同步右侧面板数字
+  const pl=$("#sp-left"), pt=$("#sp-top");
+  if(pl) pl.value = Math.round(newLeft + drag.offOriginX);
+  if(pt) pt.value = Math.round(newTop  + drag.offOriginY);
+}
+
+function onDragUp(){
+  if(!drag) return;
+  window.removeEventListener("mousemove", onDragMove);
+  window.removeEventListener("mouseup", onDragUp);
+  drag.el.classList.remove("__dragging");
+  const frame = drag.slide.closest(".slide-frame");
+  if(frame) frame.classList.remove("dragging");
+  clearGuides(drag.slide);
+  if(drag.moved){
+    styleDirty = true;
+    setStatus("已移动元素（未保存，⌘S 保存）", "ok");
+    renderStylePanel();
+  }
+  drag = null;
 }
 
 $("#btn-style-mode").addEventListener("click", ()=>{
