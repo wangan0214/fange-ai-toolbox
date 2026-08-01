@@ -256,6 +256,8 @@
   <label class="btn ghost" for="file-input" title="从本机导入任意 .html 文件（也可直接拖拽到编辑区）">打开</label>
   <input type="file" id="file-input" accept=".html,text/html" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
   <div class="tb-sep"></div>
+  <button class="btn ghost" id="btn-undo" title="撤销上一步（⌘Z）" disabled>↶ 撤销</button>
+  <button class="btn ghost" id="btn-redo" title="重做（⌘⇧Z）" disabled>↷ 重做</button>
   <button class="btn primary" id="btn-save">保存（⌘S）</button>
   <div class="exp-group">
     <select id="export-mode" class="btn ghost" title="导出 PPT 的格式：可编辑版（文字可改）/ 高清整页图（整页截图，不可改字）">
@@ -659,6 +661,9 @@ function buildEditor(doc){
     if(up) up.disabled = (dp === 0);
     if(down) down.disabled = (dp === sideItems.length - 1);
   });
+  // 重置撤销历史（每次加载/重读文件都重新开始，避免跨文件混合）
+  slideHistory = []; histIdx = -1;
+  pushHistory();
 }
 
 // 序列化（安全版）：保留源文件原文 RAW 的非 slide 部分（head / deck 脚本 / 外层标签），
@@ -697,6 +702,89 @@ function buildHtml(){
   return pre + body + post;
 }
 
+/* ===================== 历史 / 撤销（Undo） =====================
+ * 快照 = { order: 原始索引排列, html: 各显示页 innerHTML }。
+ * editedSlides[dp] 即用户直接改的 .slide-wrap .slide clone，回写 innerHTML
+ * 即同时恢复「显示」与「保存真相」（save 直接读它）。顺序重排通过 applyOrder
+ * 把四个数组按快照 order 重新排列并 reflow，从而完整撤销页面顺序调整。 */
+let slideHistory = [];
+let histIdx = -1;
+let histTimer = null;
+
+function snapSlides(){
+  return {
+    order: order.slice(),
+    html: editedSlides.map(s => s ? s.innerHTML : "")
+  };
+}
+function pushHistory(){
+  const snap = snapSlides();
+  // 与栈顶比较，无实质变化不压栈（避免拖拽未动、点击空白等噪声）
+  if(histIdx >= 0){
+    const top = slideHistory[histIdx];
+    if(top && top.order.length === snap.order.length && top.order.every((o,i)=>o===snap.order[i]) &&
+       top.html.length === snap.html.length && top.html.every((h,i)=>h===snap.html[i])){
+      return;
+    }
+  }
+  slideHistory = slideHistory.slice(0, histIdx + 1);
+  slideHistory.push(snap);
+  if(slideHistory.length > 100) slideHistory.shift();
+  histIdx = slideHistory.length - 1;
+  updateUndoButtons();
+}
+// 把四个数组按新 order 重新排列（当前数组按恢复前 order 排列，下标=dp）
+function applyOrder(newOrder){
+  const cur = order;
+  const sideMap={}, wrapMap={}, editMap={};
+  cur.forEach((origIdx, dp)=>{
+    sideMap[origIdx] = sideItems[dp];
+    wrapMap[origIdx] = wrapEls[dp];
+    editMap[origIdx] = editedSlides[dp];
+  });
+  const ns=[], nw=[], ne=[];
+  newOrder.forEach(origIdx=>{
+    ns.push(sideMap[origIdx]); nw.push(wrapMap[origIdx]); ne.push(editMap[origIdx]);
+  });
+  sideItems = ns; wrapEls = nw; editedSlides = ne;
+  order = newOrder.slice();
+  currentIndex = -1;
+  reflow();
+}
+function restoreHistory(snap){
+  if(!snap) return;
+  if(snap.order && (snap.order.length !== order.length || !snap.order.every((o,i)=>o===order[i]))){
+    applyOrder(snap.order);
+  }
+  snap.html.forEach((html, dp)=>{
+    if(editedSlides[dp]) editedSlides[dp].innerHTML = html;
+  });
+  if(pickedEl) pickEl(null);
+  dirty = true;
+  setStatus("已撤销到上一步", "ok");
+  updateUndoButtons();
+}
+function undo(){
+  if(histIdx <= 0){ setStatus("已经是最初状态", "warn"); return; }
+  histIdx--;
+  restoreHistory(slideHistory[histIdx]);
+}
+function redo(){
+  if(histIdx >= slideHistory.length - 1){ setStatus("没有可重做的步骤", "warn"); return; }
+  histIdx++;
+  restoreHistory(slideHistory[histIdx]);
+}
+function updateUndoButtons(){
+  const u = $("#btn-undo"), r = $("#btn-redo");
+  if(u) u.disabled = (histIdx <= 0);
+  if(r) r.disabled = (histIdx >= slideHistory.length - 1);
+}
+// 文字输入连续触发，防抖合并成一步
+function requestPushHistory(){
+  if(histTimer) clearTimeout(histTimer);
+  histTimer = setTimeout(()=>{ pushHistory(); }, 500);
+}
+
 // 重排：交换显示位置 dp 与 dp+dir 两张幻灯片（dir=-1 上移，+1 下移）
 function moveSlide(dp, dir){
   const np = dp + dir;
@@ -708,6 +796,7 @@ function moveSlide(dp, dir){
   reflow();
   dirty = true;
   setStatus("已调整顺序", "ok");
+  pushHistory();
 }
 
 // 拖拽排序：把显示位置 from 的项移动到 to（to 为放置目标项的显示位置）
@@ -725,6 +814,7 @@ function moveTo(from, to){
   reflow();
   dirty = true;
   setStatus("已移动页面", "ok");
+  pushHistory();
 }
 
 // 按显示顺序把侧栏与编辑区 DOM 重新归位，并刷新序号 / 页码 / 按钮禁用态
@@ -900,6 +990,8 @@ function toggleZoom(){
 $("#btn-save").addEventListener("click", save);
 $("#btn-render").addEventListener("click", startRender);
 $("#btn-zoom").addEventListener("click", toggleZoom);
+$("#btn-undo").addEventListener("click", undo);
+$("#btn-redo").addEventListener("click", redo);
 $("#btn-save-render").addEventListener("click", async ()=>{ await save(); await startRender(); });
 
 // ========= 样式模式（Properties 面板） =========
@@ -1042,6 +1134,7 @@ function renderStylePanel(){
       writeElStyle(pickedEl, key, v);
       styleDirty = true;
       setStatus("样式已改（未保存）", "ok");
+      pushHistory();
     });
   };
   bind(".sp-top", "top");
@@ -1054,15 +1147,18 @@ function renderStylePanel(){
     styleDirty = true;
     renderStylePanel();
     setStatus("样式已改（未保存）", "ok");
+    pushHistory();
   });
   body.querySelector(".sp-transform").addEventListener("change", (e)=>{
     writeElStyle(pickedEl, "transform", e.target.value);
     styleDirty = true;
     setStatus("样式已改（未保存）", "ok");
+    pushHistory();
   });
   body.querySelector(".sp-color").addEventListener("change", (e)=>{
     writeElStyle(pickedEl, "color", e.target.value);
     styleDirty = true;
+    pushHistory();
   });
   body.querySelector(".sp-bg").addEventListener("change", (e)=>{
     const v = e.target.value;
@@ -1072,6 +1168,7 @@ function renderStylePanel(){
       pickedEl.style.background = v;
     }
     styleDirty = true;
+    pushHistory();
   });
   body.querySelector(".sp-reset").addEventListener("click", ()=>{
     if(!pickedEl) return;
@@ -1080,6 +1177,7 @@ function renderStylePanel(){
     styleDirty = true;
     renderStylePanel();
     setStatus("已清 inline style", "ok");
+    pushHistory();
   });
   const absBtn = body.querySelector(".sp-make-abs");
   if(!absBtn.disabled){
@@ -1090,6 +1188,7 @@ function renderStylePanel(){
       styleDirty = true;
       renderStylePanel();
       setStatus("已设为 absolute", "ok");
+      pushHistory();
     });
   }
 }
@@ -1105,13 +1204,10 @@ function pickEl(el){
 function enterStyleMode(){
   styleMode = true;
   document.body.classList.add("style-mode");
-  showStyleTip("📐 样式模式 — 直接在画布上拖动元素即可移动，靠近其他元素 / 中线 / 边缘会自动吸附对齐。Esc 退出");
-  // 样式模式必须在 1:1 缩放下才能精确点击——若当前是缩略图模式，自动 zoom 到当前页
-  if(!document.body.classList.contains("edit-mode")){
-    toggleZoom();
-  } else if(!document.querySelector(".slide-wrap.zoomed")){
-    applyZoom(currentIndex >= 0 ? currentIndex : 0);
-  }
+  showStyleTip("📐 样式模式 — 直接在画布上拖动元素即可移动，靠近其他元素 / 中线 / 边缘会自动吸附对齐。Esc 退出（如需更精确点选，可先点「放大编辑当前页」）");
+  // 注意：不再自动放大页面。拖拽坐标计算用源像素空间（mouse delta ÷ 画布缩放），
+  // 缩略图下也能精确拖拽。自动放大会让页面突然跳变，体验突兀，故改为保持当前视图，
+  // 用户想放大时手动点「放大编辑当前页」按钮即可。
   // 绑定全局 click（事件代理在 #editor）
   $("#editor").addEventListener("click", styleModeClick, true);
 }
@@ -1299,6 +1395,7 @@ function onDragUp(){
     styleDirty = true;
     setStatus("已移动元素（未保存，⌘S 保存）", "ok");
     renderStylePanel();
+    pushHistory();
   }
   drag = null;
 }
@@ -1589,6 +1686,15 @@ $("#prog-cancel").addEventListener("click", async ()=>{
   try{ await fetch("/api/cancel-render", {method:"POST"}); }catch(e){}
 });
 document.addEventListener("keydown", (e)=>{
+  // 撤销 / 重做：接管 ⌘Z / ⌘⇧Z（及 Ctrl+Y），统一走历史栈（覆盖文字、拖拽、属性、顺序重排）
+  if((e.metaKey||e.ctrlKey) && (e.key==="z" || e.key==="Z")){
+    e.preventDefault();
+    if(e.shiftKey) redo(); else undo();
+    return;
+  }
+  if((e.metaKey||e.ctrlKey) && (e.key==="y" || e.key==="Y")){
+    e.preventDefault(); redo(); return;
+  }
   if((e.metaKey||e.ctrlKey) && e.key==="s"){ e.preventDefault(); save(); return; }
   // 回车不撞绝对定位：在 contenteditable 内拦截 Enter，改插 <br>（不嵌 <div><p>，避免多层 <p> 在同一 top:xxx 位置堆叠导致文字叠合）
   if(e.key==="Enter" && !e.shiftKey){
@@ -1616,7 +1722,8 @@ document.addEventListener("keydown", (e)=>{
 });
 
 // 任何在编辑器内的手动改字都标记 dirty（contenteditable 的 input 事件冒泡到 #editor）
-$("#editor").addEventListener("input", ()=>{ dirty = true; });
+// 文字输入连续触发，防抖合并成一步历史（requestPushHistory）
+$("#editor").addEventListener("input", ()=>{ dirty = true; requestPushHistory(); });
 
 // 自动草稿
 setInterval(autosave, 10000);

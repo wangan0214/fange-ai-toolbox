@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.18
+version: 1.0.19
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -113,6 +113,14 @@ python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.19（2026-08-01）撤销/重做栈 + 修样式模式自动放大
+- **撤销栈（用户强需求："所有改动都应该有撤回的能力"）**：顶栏新增「↶ 撤销 / ↷ 重做」按钮 + ⌘Z / ⌘⇧Z（及 Ctrl+Y）快捷键，全局接管，覆盖**文字编辑、画布拖拽、属性面板、重置 inline style、设为 absolute、页面顺序重排**全部改动类型。
+  - 快照 = `{order: 原始索引排列, html: 各显示页 innerHTML}`。因 `editedSlides[dp]` 就是用户直接改的 `.slide-wrap .slide` clone，回写 innerHTML 即同时恢复「显示」与「保存真相」（save 直接读它）。
+  - 顺序重排通过 `applyOrder(newOrder)` 把 `order/sideItems/wrapEls/editedSlides` 四个数组按快照 order 重新排列并 `reflow()`，从而完整撤销页面顺序调整。
+  - 防抖：文字输入连续触发 `input` 事件，500ms 防抖合并成一步；其余改动（拖拽/属性/顺序）在动作结束立即压栈。与栈顶比较，无实质变化不压栈（避免拖拽未动等噪声）。
+  - 每次加载/重读文件 `slideHistory=[]; histIdx=-1; pushHistory()` 重置历史，避免跨文件混合。
+- **修样式模式自动放大（用户反馈"会突然放大页面，很奇怪"）**：删掉 `enterStyleMode` 里自动 `toggleZoom/applyZoom` 的逻辑。拖拽坐标全程在源像素空间算（mouse delta ÷ 画布 transform:scale），缩略图下也能精确拖拽，无需放大。用户想精确点选可手动点「放大编辑当前页」。
 
 ### v1.0.18（2026-07-31）画布直接拖拽 + 自动对齐辅助线（WYSIWYG）
 
