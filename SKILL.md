@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.20
+version: 1.0.21
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -57,30 +57,39 @@ outputs:
 - 非 deck 结构（每页不是 `<section class="slide">` 的）HTML
 - 需要多人实时协作编辑的场景（本工具是单人本地编辑；但「上传飞书云空间」可把成品发到飞书供他人查看 / 评论）
 
-## 快速使用（5 分钟跑起来）
+## 快速使用（3 分钟跑起来）
+
+**核心规则：启动器放在哪个 deck 目录，就编辑哪个 deck。** 无需记命令。
 
 ```bash
-# 1. 复制 skill 到任意位置（已装就跳过）
-# 假设 skill 在 ~/.workbuddy/skills/fange-html-deck-editor/
+# 最推荐：把一键启动脚本复制到「要编辑的 deck 目录」（和 index.html 同级），双击即可
+cp fde_editor/帆哥PPT编辑器一键启动.command ~/Documents/.../EP27-幻灯片/编辑此PPT一键启动.command
+# 双击「编辑此PPT一键启动.command」→ root 自动 = EP27-幻灯片，保存写回原处
 
-# 2. cd 到你的 deck 项目目录（v1.0.20 起必须 cd 过去；root 跟启动位置走）
-cd ~/decks   # ← 例如 ~/decks 或 ~/Documents/.../EP27-幻灯片
-
-# 3. 用 skill 自带的一键启动脚本（在 scripts/）
-~/.workbuddy/skills/fange-html-deck-editor/scripts/start.command
-# 或手动：
-python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
-  --root ~/decks --port 8731
+# 进阶（任选）：
+FDE_ROOT=/path/to/deck  fde_editor/帆哥PPT编辑器一键启动.command   # 环境变量指定 root
+fde_editor/帆哥PPT编辑器一键启动.command /path/to/deck            # 参数指定 root
+# 直接双击 fde_editor/ 里的本文件 → root = 12-FDE研究（编辑 FDE 系列 deck 用，向后兼容）
 ```
 
 浏览器自动打开 http://localhost:8731/ ，开始改字。
 
-> **v1.0.20 重要修复：root 必须指向你要编辑的 deck 所在目录。**
-> 之前一键启动脚本硬编码 `ROOT=12-FDE研究`，导致用户用「打开文件」加载其他项目
-> 的 HTML 时，前端只记 `file.name`（basename），保存时会拼到 12-FDE研究 下 →
-> 写到错地方，**表现为"改不了"**。v1.0.20 起 root 跟启动位置走：在要编辑的
-> deck 目录里 cd 后再启动脚本，所有保存都写回那里。
-> 兜底：直接双击一键启动脚本 → root = 12-FDE研究（向后兼容老用法）。
+> **v1.0.21 重要修复：一键启动真正「跟随 deck 目录」，且自动切换 root。**
+> 之前的坑：一键启动脚本硬编码 `ROOT=12-FDE研究`，用户想编辑 EP27（在另一个
+> 项目文件夹 `W-自媒体测试/LaiyeWorker调研/EP27-幻灯片`）时，编辑器在那个根下
+> 「看不见也存不对」EP27 → 表现为"改不了"。v1.0.20 曾试图让 root 跟 cwd 走，
+> 但脚本里 `cd "$DIR"` 把 cwd 强制改回脚本目录，导致 cd 方案实际失效、双击永远锁死
+> 12-FDE研究。
+>
+> **v1.0.21 根因级修法**：
+> 1. root 判定改为「脚本所在目录是否有 index.html」——放在 deck 目录里就编辑那个 deck；
+>    放在 fde_editor/ 里（无 index.html）则兜底 12-FDE研究（向后兼容）。
+> 2. 后端新增 `GET /api/root` 返回当前实例 root；启动器检测：若 8731 已在跑但 root 不对，
+>    自动 `pkill` 旧实例并用正确 root 重启（一次双击永远开对地方）。
+> 3. 后台 python 输出重定向到 `<root>/.fde_editor.log`，避免占用终端 / 管道挂死。
+>
+> **结论**：编辑 12-FDE研究 里的 deck → 直接双击 fde_editor 里的启动器；编辑 EP27 等
+> 其他项目的 deck → 把启动器复制到该 deck 目录双击（已为 EP27 放好一份）。
 
 ## 关键设计
 

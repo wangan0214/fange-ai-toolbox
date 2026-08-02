@@ -10,6 +10,7 @@
   POST /api/export-pptx    -> 后台渲染 + 打包成 .pptx（16:9）
   GET  /api/download-pptx  -> 下载生成的 .pptx
   GET  /api/render-status  -> 渲染/导出进度
+  GET  /api/root           -> 返回当前实例的 root（供一键启动脚本检测并自动重启）
   GET  /api/history?file=  -> 列出该文件的历史快照
   GET  /api/history-file?file=&snap= -> 读取某个历史快照内容（预览/下载）
   POST /api/rollback       -> 把某个历史快照原子写回源文件（回滚前自动留快照）
@@ -504,6 +505,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with render_lock:
                 snap = {k: v for k, v in render_status.items() if k != "_proc"}
             self._send(200, json.dumps(snap))
+        elif self.path == "/api/root":
+            # 让一键启动脚本检测当前实例的 root 是否匹配，不匹配则自动重启
+            self._send(200, json.dumps({"root": ALLOWED_ROOT, "default": DEFAULT_FILE}, ensure_ascii=False))
         elif self.path == "/api/feishu-auth":
             self._send(200, json.dumps(run_feishu_auth(), ensure_ascii=False))
         elif self.path == "/api/download-pptx":
