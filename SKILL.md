@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.19
+version: 1.0.20
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -63,8 +63,8 @@ outputs:
 # 1. 复制 skill 到任意位置（已装就跳过）
 # 假设 skill 在 ~/.workbuddy/skills/fange-html-deck-editor/
 
-# 2. cd 到你的 deck 项目目录（假设是 ~/decks）
-cd ~/decks
+# 2. cd 到你的 deck 项目目录（v1.0.20 起必须 cd 过去；root 跟启动位置走）
+cd ~/decks   # ← 例如 ~/decks 或 ~/Documents/.../EP27-幻灯片
 
 # 3. 用 skill 自带的一键启动脚本（在 scripts/）
 ~/.workbuddy/skills/fange-html-deck-editor/scripts/start.command
@@ -74,6 +74,13 @@ python ~/.workbuddy/skills/fange-html-deck-editor/scripts/editor_server.py \
 ```
 
 浏览器自动打开 http://localhost:8731/ ，开始改字。
+
+> **v1.0.20 重要修复：root 必须指向你要编辑的 deck 所在目录。**
+> 之前一键启动脚本硬编码 `ROOT=12-FDE研究`，导致用户用「打开文件」加载其他项目
+> 的 HTML 时，前端只记 `file.name`（basename），保存时会拼到 12-FDE研究 下 →
+> 写到错地方，**表现为"改不了"**。v1.0.20 起 root 跟启动位置走：在要编辑的
+> deck 目录里 cd 后再启动脚本，所有保存都写回那里。
+> 兜底：直接双击一键启动脚本 → root = 12-FDE研究（向后兼容老用法）。
 
 ## 关键设计
 
