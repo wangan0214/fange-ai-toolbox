@@ -37,7 +37,11 @@ except Exception:
     build_image_pptx = None
 
 # ---------- 默认值（可被 CLI 参数覆盖） ----------
-_DEFAULT_ROOT = os.path.dirname(os.path.abspath(__file__))   # 编辑器所在目录的上级
+# 编辑器自家目录：scripts/ 的上级（即「帆哥 PPT 编辑器/」）。
+# 启动后 ALLOWED_ROOT 会随「打开的 deck」动态切到该 deck 所在目录（原地编辑），
+# 但历史快照 / 渲染产物 / 日志一律存编辑器自家目录，绝不污染用户项目文件夹。
+EDITOR_HOME = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_ROOT = EDITOR_HOME
 _DEFAULT_PORT = 8731
 
 def _resolve_default_file(root):
@@ -65,13 +69,15 @@ def _parse_args():
     return p.parse_args()
 
 _args = _parse_args()
-ALLOWED_ROOT = os.path.abspath(_args.root)
+ALLOWED_ROOT = os.path.abspath(_args.root)   # 初始 = 编辑器自家目录；打开 deck 后切到该 deck 目录
 PORT = _args.port
-DEFAULT_FILE = _args.default_file or _resolve_default_file(ALLOWED_ROOT)
-RENDER_PW = os.path.join(ALLOWED_ROOT, "render_slides_pw.py")
-RENDER_DIR = ALLOWED_ROOT           # 预览 PNG 与源同目录
-HISTORY_ROOT = os.path.join(ALLOWED_ROOT, ".fde_history")
-ROOT = ALLOWED_ROOT                # 静态文件根（slide 配图）
+DEFAULT_FILE = _args.default_file or "index.html"
+RENDER_PW = os.path.join(EDITOR_HOME, "scripts", "render_slides_pw.py")
+HISTORY_BASE = os.path.join(EDITOR_HOME, ".history")   # 历史快照存这里，不进用户文件夹
+RENDER_BASE = os.path.join(EDITOR_HOME, ".render")     # 渲染/导出产物存这里，不进用户文件夹
+ACTIVE_FILE = None     # 当前打开的 deck 绝对路径（None = 还没打开）
+ACTIVE_DIR = None      # 当前打开的 deck 所在目录
+ROOT = ALLOWED_ROOT                # 静态文件根（未打开时是编辑器自家目录；打开后是 deck 目录，用于服务 deck 配图）
 # 编辑器前端页面（editor.html）随 skill 走，固定在本文件同级 templates/，不依赖用户 decks 目录
 SKILL_SCRIPTS = os.path.dirname(os.path.abspath(__file__))   # scripts/
 EDITOR_HTML = os.path.join(SKILL_SCRIPTS, "..", "templates", "editor.html")
@@ -113,9 +119,42 @@ def safe_snap(snap):
     return True
 
 
-# ---------- 历史快照 ----------
-def snapshot_dir(rel):
-    d = os.path.join(HISTORY_ROOT, base_of(rel))
+def resolve_file(rel):
+    """原地编辑模式下的「目标源文件」解析：打开 deck 后，所有读写一律落在 ACTIVE_FILE
+    所在目录（deck 目录）内，绝不逃逸到编辑器目录或用户其他位置。
+
+    - 未打开 deck（ACTIVE_FILE 为 None）：一律返回 None（前端引导页不会发起写操作）。
+    - rel 为空或等同 DEFAULT_FILE：返回 ACTIVE_FILE 本身。
+    - rel 为绝对路径：必须是 ACTIVE_FILE 本身，或同一 deck 目录下的其他 .html（切换文件）。
+    - rel 为文件名：必须是同一 deck 目录下的 .html。
+    任何越界都返回 None（handler 据此返回 400）。
+    """
+    if not ACTIVE_FILE:
+        return None
+    if not rel or rel == DEFAULT_FILE:
+        return ACTIVE_FILE
+    if os.path.isabs(rel):
+        if rel == ACTIVE_FILE:
+            return ACTIVE_FILE
+        if os.path.dirname(rel) == ACTIVE_DIR and rel.endswith(".html"):
+            return rel
+        return None
+    cand = os.path.normpath(os.path.join(ALLOWED_ROOT, rel))
+    if os.path.dirname(cand) == ACTIVE_DIR and cand.endswith(".html"):
+        return cand
+    return None
+
+
+# ---------- 历史快照（存编辑器自家目录，按 deck 绝对路径命名空间）----------
+def deck_key(abs_path):
+    """用 deck 绝对路径生成稳定且唯一的子目录名，避免不同目录下同名 index.html 互相覆盖。"""
+    import hashlib
+    h = hashlib.sha1(abs_path.encode("utf-8")).hexdigest()[:12]
+    return f"{h}_{base_of(abs_path)}"
+
+
+def snapshot_dir():
+    d = os.path.join(HISTORY_BASE, deck_key(ACTIVE_FILE))
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -124,13 +163,14 @@ def save_snapshot(rel, html):
     """把 html 存一份带时间戳的快照；超出上限删最旧（一次一个明确路径，合规）。
 
     时间戳精确到微秒，避免同秒内连续保存/回滚时文件名碰撞导致快照被覆盖。
+    快照存于 HISTORY_BASE/<deckKey>/，绝不写入用户项目文件夹。
     """
-    d = snapshot_dir(rel)
+    d = snapshot_dir()
     ts = time.strftime("%Y%m%dT%H%M%S") + ("%06d" % int((time.time() % 1) * 1e6))
-    name = f"{base_of(rel)}.{ts}.html"
+    name = f"{base_of(ACTIVE_FILE)}.{ts}.html"
     with open(os.path.join(d, name), "w", encoding="utf-8") as f:
         f.write(html)
-    prefix = base_of(rel) + "."
+    prefix = base_of(ACTIVE_FILE) + "."
     files = sorted(
         [os.path.join(d, f) for f in os.listdir(d)
          if f.endswith(".html") and f.startswith(prefix)],
@@ -143,11 +183,11 @@ def save_snapshot(rel, html):
             pass
 
 
-def list_history(rel):
-    d = os.path.join(HISTORY_ROOT, base_of(rel))
+def list_history():
+    d = os.path.join(HISTORY_BASE, deck_key(ACTIVE_FILE))
     if not os.path.isdir(d):
         return []
-    prefix = base_of(rel) + "."
+    prefix = base_of(ACTIVE_FILE) + "."
     items = []
     for f in os.listdir(d):
         if f.endswith(".html") and f.startswith(prefix):
@@ -159,19 +199,84 @@ def list_history(rel):
 
 
 def list_html_files():
+    """未打开 deck 时返回空（编辑器不再罗列某个固定根下的文件）；
+    打开 deck 后罗列当前 deck 目录下所有 .html（含子目录），供「切换文件」下拉使用。"""
     res = []
     for dp, dirs, fns in os.walk(ALLOWED_ROOT):
-        # 跳过编辑器自身目录、历史目录、以及隐藏目录（.frontend-slides 等）
-        dirs[:] = [d for d in dirs
-                   if d not in ("fde_editor", ".fde_history") and not d.startswith(".")]
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
         for fn in fns:
-            # 排除渲染临时残片（render_slides_pw.py 的 NamedTemporaryFile）
             if fn.endswith(".html") and not fn.startswith("fde-deck-"):
                 full = os.path.join(dp, fn)
                 rel = os.path.relpath(full, ALLOWED_ROOT)
-                res.append({"rel": rel, "name": fn})
+                res.append({"rel": rel, "name": fn, "abs": full})
     res.sort(key=lambda x: (x["rel"] != DEFAULT_FILE, x["rel"]))
     return res
+
+
+# ---------- 打开 deck（原地编辑核心）----------
+RECENT_FILE = os.path.join(EDITOR_HOME, ".recent.json")
+
+def read_recent():
+    try:
+        with open(RECENT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+def push_recent(abs_path):
+    lst = read_recent()
+    lst = [p for p in lst if p != abs_path]
+    lst.insert(0, abs_path)
+    lst = lst[:12]
+    try:
+        with open(RECENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(lst, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return lst
+
+def remove_recent(abs_path):
+    lst = read_recent()
+    lst = [p for p in lst if p != abs_path]
+    try:
+        with open(RECENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(lst, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return lst
+
+def set_active(abs_path):
+    """打开一个 deck：把 ALLOWED_ROOT 动态切到该文件所在目录（原地编辑）。
+    之后所有现有 handler（load/save/render/rollback）都作用于这个 deck，无需复制文件。"""
+    global ALLOWED_ROOT, DEFAULT_FILE, ACTIVE_FILE, ACTIVE_DIR, ROOT
+    abs_path = os.path.abspath(abs_path)
+    ALLOWED_ROOT = os.path.dirname(abs_path)
+    DEFAULT_FILE = os.path.basename(abs_path)
+    ACTIVE_FILE = abs_path
+    ACTIVE_DIR = os.path.dirname(abs_path)
+    ROOT = os.path.dirname(abs_path)   # 静态资源（配图等）也以 deck 目录为根，保证 relative 引用可加载
+
+def pick_path(kind):
+    """调用 macOS 原生选择对话框，返回所选文件/文件夹的绝对路径；取消或失败返回 None。"""
+    if kind == "folder":
+        script = ('try\n'
+                  'POSIX path of (choose folder with prompt "选择要编辑的 deck 文件夹")\n'
+                  'on error\nreturn ""\nend try')
+    else:
+        script = ('try\n'
+                  'POSIX path of (choose file with prompt "选择要编辑的 PPT（index.html 等）")\n'
+                  'on error\nreturn ""\nend try')
+    try:
+        out = subprocess.run(["osascript", "-e", script],
+                             capture_output=True, text=True, timeout=120).stdout.strip()
+    except Exception:
+        return None
+    if not out or out.lower().startswith("null"):
+        return None
+    return out.rstrip("/") or None
 
 
 # ---------- 渲染 ----------
@@ -185,13 +290,15 @@ def count_slides(file):
 def render_all_pw(file):
     """单会话渲染：用 Playwright 启动一次 Chrome，把全部幻灯片截成 PNG。"""
     n = count_slides(file)
+    outdir = os.path.join(RENDER_BASE, deck_key(file))   # 渲染产物存编辑器自家目录
+    os.makedirs(outdir, exist_ok=True)
     with render_lock:
         render_status["total"] = n
         render_status["done"] = 0
         render_status["cancelled"] = False
     proc = subprocess.Popen(
-        [sys.executable, RENDER_PW, file, "1", str(n)],
-        cwd=RENDER_DIR,
+        [sys.executable, RENDER_PW, "--out", outdir, file, "1", str(n)],
+        cwd=ACTIVE_DIR or os.path.dirname(file),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -235,18 +342,20 @@ def build_pptx(file):
     from pptx import Presentation
     from pptx.util import Emu
     n = count_slides(file)
+    outdir = os.path.join(RENDER_BASE, deck_key(file))   # 产物存编辑器自家目录
+    os.makedirs(outdir, exist_ok=True)
     prs = Presentation()
     prs.slide_width = Emu(12192000)   # 锁定 16:9 / 1920×1080（标准宽屏，精确 EMU）
     prs.slide_height = Emu(6858000)
     blank = prs.slide_layouts[6]
     for i in range(1, n + 1):
-        img = os.path.join(RENDER_DIR, f"preview-P{i:02d}.png")
+        img = os.path.join(outdir, f"preview-P{i:02d}.png")
         if not os.path.exists(img):
             continue
         slide = prs.slides.add_slide(blank)
         slide.shapes.add_picture(img, 0, 0,
                                  width=prs.slide_width, height=prs.slide_height)
-    out = os.path.join(RENDER_DIR, base_of(file) + ".pptx")
+    out = os.path.join(outdir, base_of(file) + ".pptx")
     prs.save(out)
     return out
 
@@ -264,7 +373,7 @@ def run_export(file, mode="editable"):
         if mode == "image":
             # 高清整页图片版：每页整页高分辨率截图直接铺满一页，无文本框（不可二次改字）
             if build_image_pptx is not None:
-                out = build_image_pptx(file)
+                out = build_image_pptx(file, out_dir=os.path.join(RENDER_BASE, deck_key(file)))
             else:
                 render_all_pw(file)
                 out = build_pptx(file)
@@ -272,7 +381,7 @@ def run_export(file, mode="editable"):
         else:
             # 可编辑版（默认）：整页截图背景 + 文字转可编辑文本框
             if build_editable_pptx is not None:
-                out = build_editable_pptx(file)
+                out = build_editable_pptx(file, out_dir=os.path.join(RENDER_BASE, deck_key(file)))
             else:
                 render_all_pw(file)
                 out = build_pptx(file)
@@ -296,21 +405,26 @@ def run_export(file, mode="editable"):
             render_status["running"] = False
 
 
-def run_upload_feishu(rel, kind):
-    """上传当前 HTML 或已导出的 PPTX 到飞书云空间（Drive 根目录）。
+def run_upload_feishu(kind):
+    """上传当前打开 deck 的 HTML 或已导出的 PPTX 到飞书云空间（Drive 根目录）。
 
     返回 {ok, url, token, msg, raw}。url 为可打开的飞书云空间链接。
+    所有读写都基于 ACTIVE_FILE / RENDER_BASE，绝不触碰用户其他文件。
     """
     import shutil
     if kind == "pptx":
-        name = base_of(rel) + ".pptx"
-        fp = os.path.join(RENDER_DIR, name)
-        if not os.path.isfile(fp):
+        name = render_status.get("pptx_name", "")
+        if not name:
             return {"ok": False, "msg": "尚未导出 PPT，请先点「导出 PPT」", "raw": ""}
+        if not ACTIVE_FILE:
+            return {"ok": False, "msg": "尚未打开 deck", "raw": ""}
+        fp = os.path.join(RENDER_BASE, deck_key(ACTIVE_FILE), name)
+        if not os.path.isfile(fp):
+            return {"ok": False, "msg": "PPT 文件不存在，请重新导出", "raw": ""}
     else:
-        fp = safe_abs(rel)
+        fp = ACTIVE_FILE
         if not fp or not os.path.isfile(fp):
-            return {"ok": False, "msg": "源文件不存在", "raw": ""}
+            return {"ok": False, "msg": "尚未打开 deck 或源文件不存在", "raw": ""}
     cli = shutil.which("lark-cli") or "lark-cli"
     # lark-cli 要求 --file 为「当前目录下的相对路径」，故切到文件所在目录再传文件名
     up_dir = os.path.dirname(fp)
@@ -463,42 +577,79 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(500, str(e))
         elif self.path == "/api/files":
             self._send(200, json.dumps(list_html_files(), ensure_ascii=False))
+        elif self.path == "/api/recent":
+            self._send(200, json.dumps(read_recent(), ensure_ascii=False))
+        elif self.path.startswith("/api/pick"):
+            qs = self._qs()
+            kind = (qs.get("type") or ["file"])[0]
+            p = pick_path(kind)
+            if p is None:
+                self._send(200, json.dumps({"path": None}))
+            else:
+                self._send(200, json.dumps({"path": p}, ensure_ascii=False))
+        elif self.path.startswith("/api/open"):
+            qs = self._qs()
+            p = (qs.get("path") or [""])[0].rstrip("/")
+            if not p:
+                self._send(400, json.dumps({"error": "缺少 path"}))
+                return
+            # 若是目录，找里面的 deck html（index.html 优先）
+            if os.path.isdir(p):
+                cand = None
+                for fn in ("index.html", "INDEX.HTML"):
+                    if os.path.isfile(os.path.join(p, fn)):
+                        cand = os.path.join(p, fn); break
+                if cand is None:
+                    try:
+                        for fn in sorted(os.listdir(p)):
+                            if fn.endswith(".html") and not fn.startswith("fde-deck-"):
+                                cand = os.path.join(p, fn); break
+                    except Exception:
+                        pass
+                p = cand
+            if not p or not os.path.isfile(p) or not p.endswith(".html"):
+                self._send(400, json.dumps({"error": "不是有效的 .html deck 文件"}))
+                return
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except Exception as e:
+                self._send(500, json.dumps({"error": str(e)}))
+                return
+            set_active(p)
+            push_recent(p)
+            self._send(200, text, "text/plain; charset=utf-8")
         elif self.path.startswith("/api/load"):
             qs = self._qs()
             rel = (qs.get("file") or [DEFAULT_FILE])[0]
-            fp = safe_abs(rel)
+            fp = resolve_file(rel)
             if not fp:
-                self._send(400, json.dumps({"error": "非法文件"}))
+                self._send(400, json.dumps({"error": "非法文件或未打开 deck"}))
                 return
             try:
                 with open(fp, "r", encoding="utf-8") as f:
                     self._send(200, f.read(), "text/plain; charset=utf-8")
             except Exception as e:
                 self._send(500, json.dumps({"error": str(e)}))
-        elif self.path.startswith("/api/history"):
-            qs = self._qs()
-            rel = (qs.get("file") or [DEFAULT_FILE])[0]
-            fp = safe_abs(rel)
-            if not fp:
-                self._send(400, json.dumps({"error": "非法文件"}))
-                return
-            self._send(200, json.dumps(list_history(rel), ensure_ascii=False))
         elif self.path.startswith("/api/history-file"):
             qs = self._qs()
-            rel = (qs.get("file") or [DEFAULT_FILE])[0]
             snap = (qs.get("snap") or [""])[0]
-            fp = safe_abs(rel)
-            if not fp or not safe_snap(snap):
+            if not ACTIVE_FILE or not safe_snap(snap):
                 self._send(400, "bad request")
                 return
-            snap_fp = os.path.join(HISTORY_ROOT, base_of(rel), snap)
+            snap_fp = os.path.join(HISTORY_BASE, deck_key(ACTIVE_FILE), snap)
             sb = os.path.normpath(snap_fp)
-            hb = os.path.normpath(HISTORY_ROOT)
+            hb = os.path.normpath(HISTORY_BASE)
             if not sb.startswith(hb + os.sep) or not os.path.isfile(sb):
                 self._send(404, "not found")
                 return
             with open(sb, "r", encoding="utf-8") as f:
                 self._send(200, f.read(), "text/html; charset=utf-8")
+        elif self.path.startswith("/api/history"):
+            if not ACTIVE_FILE:
+                self._send(200, json.dumps([]))
+                return
+            self._send(200, json.dumps(list_history(), ensure_ascii=False))
         elif self.path == "/favicon.ico":
             self._send(204, b"")
         elif self.path == "/api/render-status":
@@ -545,9 +696,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/save":
             rel = data.get("file", DEFAULT_FILE)
             html = data.get("html", "")
-            fp = safe_abs(rel)
+            fp = resolve_file(rel)
             if not fp:
-                self._send(400, json.dumps({"error": "非法文件"}))
+                self._send(400, json.dumps({"error": "非法文件或未打开 deck"}))
                 return
             try:
                 tmp = fp + ".tmp"
@@ -560,9 +711,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(500, json.dumps({"error": str(e)}))
         elif self.path == "/api/render":
             rel = data.get("file", DEFAULT_FILE)
-            fp = safe_abs(rel)
+            fp = resolve_file(rel)
             if not fp:
-                self._send(400, json.dumps({"ok": False, "msg": "非法文件"}))
+                self._send(400, json.dumps({"ok": False, "msg": "非法文件或未打开 deck"}))
                 return
             if render_status["running"]:
                 self._send(200, json.dumps({"ok": False, "msg": "渲染进行中，请稍候"}))
@@ -583,9 +734,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/export-pptx":
             rel = data.get("file", DEFAULT_FILE)
             mode = data.get("mode", "editable")
-            fp = safe_abs(rel)
+            fp = resolve_file(rel)
             if not fp:
-                self._send(400, json.dumps({"ok": False, "msg": "非法文件"}))
+                self._send(400, json.dumps({"ok": False, "msg": "非法文件或未打开 deck"}))
                 return
             if render_status["running"]:
                 self._send(200, json.dumps({"ok": False, "msg": "任务进行中，请稍候"}))
@@ -596,13 +747,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/rollback":
             rel = data.get("file", DEFAULT_FILE)
             snap = data.get("snap", "")
-            fp = safe_abs(rel)
+            fp = resolve_file(rel)
             if not fp or not safe_snap(snap):
                 self._send(400, json.dumps({"error": "非法参数"}))
                 return
-            snap_fp = os.path.join(HISTORY_ROOT, base_of(rel), snap)
+            snap_fp = os.path.join(HISTORY_BASE, deck_key(ACTIVE_FILE), snap)
             sb = os.path.normpath(snap_fp)
-            hb = os.path.normpath(HISTORY_ROOT)
+            hb = os.path.normpath(HISTORY_BASE)
             if not sb.startswith(hb + os.sep) or not os.path.isfile(sb):
                 self._send(404, json.dumps({"error": "快照不存在"}))
                 return
@@ -622,10 +773,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, json.dumps({"error": str(e)}))
         elif self.path == "/api/upload-feishu":
-            rel = data.get("file", DEFAULT_FILE)
             kind = data.get("kind", "html")
-            res = run_upload_feishu(rel, kind)
+            res = run_upload_feishu(kind)
             self._send(200, json.dumps(res, ensure_ascii=False))
+        elif self.path == "/api/recent-remove":
+            p = data.get("path", "")
+            remove_recent(p)
+            self._send(200, json.dumps({"ok": True}))
         elif self.path == "/api/download-pptx":
             self._serve_pptx()
         else:
@@ -637,8 +791,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not name:
             self._send(404, "not ready")
             return
-        fp = os.path.join(RENDER_DIR, name)
-        if not os.path.isfile(fp):
+        fp = os.path.join(RENDER_BASE, deck_key(ACTIVE_FILE), name) if ACTIVE_FILE else None
+        if not fp or not os.path.isfile(fp):
             self._send(404, "file missing")
             return
         with open(fp, "rb") as f:
@@ -661,10 +815,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 if __name__ == "__main__":
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
-        print(f"FDE Editor · http://localhost:{PORT}")
-        print(f"  root    = {ALLOWED_ROOT}")
-        print(f"  default = {DEFAULT_FILE}")
-        print(f"  history = {HISTORY_ROOT}")
+        print(f"帆哥 PPT 编辑器 · http://localhost:{PORT}")
+        print(f"  编辑器目录 = {EDITOR_HOME}")
+        print(f"  打开 deck 后，root 会自动切到该 deck 所在目录（原地编辑，保存写回原文件）")
+        print(f"  历史快照 / 渲染产物存于编辑器目录，绝不写入你的项目文件夹")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

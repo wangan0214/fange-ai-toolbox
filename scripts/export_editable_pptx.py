@@ -185,13 +185,17 @@ def _remove_clean_js():
     })()"""
 
 
-def build_editable_pptx(src):
-    """渲染每页 + 提取文本/色块 + 生成三层可编辑 PPTX，返回输出路径。"""
+def build_editable_pptx(src, out_dir=None):
+    """渲染每页 + 提取文本/色块 + 生成三层可编辑 PPTX，返回输出路径。
+
+    out_dir：渲染临时文件 / preview PNG / 背景图 的输出目录；省略则回退到 src.parent。
+    编辑器传入编辑器自家目录（RENDER_BASE/<deckKey>），让渲染产物不污染用户项目文件夹。
+    """
     n = count_slides(src)
     if n == 0:
         return None
     src = pathlib.Path(src)
-    WORK = src.parent
+    WORK = pathlib.Path(out_dir) if out_dir else src.parent
     # 渲染 + 提取（复用 deck.showSlide + 截图 + DOM 文本/色块提取）
     html = open(src, encoding="utf-8").read()
     html = re.sub(r'<link[^>]*fonts\.(googleapis|gstatic)\.com[^>]*>', "", html)
@@ -322,17 +326,18 @@ def build_editable_pptx(src):
     return str(out)
 
 
-def build_image_pptx(src, dsf=2):
+def build_image_pptx(src, dsf=2, out_dir=None):
     """高清整页图片版：每页整页高分辨率截图直接铺满一页，无文本框（不可二次改字）。
 
     适合「只要高清图、拿去演示 / 打印、不打算在 PowerPoint 里改字」的场景。
     dsf 默认 2 → 1920×1080 视口 ×2 = 3840×2160 实际像素，文字 / 配图更锐利。
+    out_dir：渲染产物输出目录；省略回退 src.parent（编辑器传入自家目录以免污染用户文件夹）。
     """
     n = count_slides(src)
     if n == 0:
         return None
     src = pathlib.Path(src)
-    WORK = src.parent
+    WORK = pathlib.Path(out_dir) if out_dir else src.parent
     html = open(src, encoding="utf-8").read()
     html = re.sub(r'<link[^>]*fonts\.(googleapis|gstatic)\.com[^>]*>', "", html)
     tmpf = tempfile.NamedTemporaryFile(prefix="fde-deck-", suffix=".html",

@@ -20,15 +20,25 @@ def count_slides(src):
     return open(src, "r", encoding="utf-8").read().count('class="slide"')
 
 def main():
-    # 用法：render_slides_pw.py [SRC] [start] [end]
+    # 用法：render_slides_pw.py [--out DIR] [SRC] [start] [end]
+    #   --out DIR：预览 PNG 与临时文件的输出目录（服务端传入编辑器自家目录，避免污染用户文件夹）
     #   SRC 省略则用默认文件；服务端调用时总传入当前编辑文件的绝对路径
     args = sys.argv[1:]
+    out_dir = None
+    cleaned = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--out" and i + 1 < len(args):
+            out_dir = args[i + 1]; i += 2; continue
+        cleaned.append(args[i]); i += 1
+    args = cleaned
     src = SRC_DEFAULT
     if args and (args[0].endswith(".html") or "/" in args[0] or os.path.exists(args[0])):
         src = pathlib.Path(args[0])
         args = args[1:]
     SRC = src
-    WORK = SRC.parent  # 预览 PNG 与临时文件与源同目录
+    WORK = pathlib.Path(out_dir) if out_dir else SRC.parent  # 预览 PNG 与临时文件目录
+    os.makedirs(WORK, exist_ok=True)
     n = count_slides(SRC)
     start = int(args[0]) if len(args) >= 1 else 1
     end = int(args[1]) if len(args) >= 2 else n

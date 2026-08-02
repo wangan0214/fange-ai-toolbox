@@ -69,6 +69,37 @@
   #status{font-size:12px;color:var(--ui-muted);min-width:180px;text-align:right;margin-left:auto;}
   #status.ok{color:var(--green);}
   #status.err{color:var(--red);}
+  #status.busy{color:var(--ui-muted);}
+
+  /* 最近打开下拉（与「更多 ▾」同款交互） */
+  .tb-recent{position:relative;flex:none;}
+  .recent-menu{display:none;position:absolute;top:calc(100% + 8px);left:0;z-index:40;
+    background:var(--ui-panel);border:1px solid var(--ui-line);border-radius:10px;padding:6px;
+    box-shadow:0 12px 36px rgba(0,0,0,.5);min-width:320px;max-width:60vw;}
+  .recent-menu.open{display:block;}
+  .recent-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--ui-text);}
+  .recent-item:hover{background:var(--ui-btn-hover);}
+  .recent-item .ric-path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .recent-item .ric-del{flex:none;border:none;background:transparent;color:var(--ui-muted);font-size:14px;cursor:pointer;padding:0 4px;}
+  .recent-item .ric-del:hover{color:var(--red);}
+  .recent-empty{padding:10px;font-size:12px;color:var(--ui-muted);}
+  /* 当前 deck 路径提示 chip */
+  .path-chip{flex:none;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:12px;color:var(--ui-muted);background:var(--ui-btn-bg);border:1px solid var(--ui-line);
+    border-radius:8px;padding:6px 10px;cursor:default;}
+  .path-chip.open{border-color:var(--green);color:var(--ui-text);}
+
+  /* 启动引导遮罩：未打开 deck 时显示，引导用户点「打开 PPT…」 */
+  #guide{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+    background:var(--ui-bg);}
+  #guide.hide{display:none;}
+  #guide .g-card{width:min(620px,92vw);text-align:center;padding:36px 28px;}
+  #guide h2{font-size:24px;margin:0 0 10px;color:var(--ui-text);}
+  #guide h2 .accent{color:var(--red);}
+  #guide p{font-size:14px;color:var(--ui-muted);line-height:1.7;margin:8px 0;}
+  #guide .g-btn{margin-top:22px;font-size:16px;padding:14px 34px;}
+  #guide .g-tip{margin-top:18px;font-size:12px;color:var(--ui-muted);}
+  #guide .g-tip b{color:var(--ui-text);}
 
   /* 布局 */
   #main{flex:1 1 auto;min-height:0;display:flex;overflow:hidden;}
@@ -245,15 +276,21 @@
 
 <div id="topbar">
   <h1>帆哥的<span class="accent">PPT</span>编辑器</h1>
-  <select id="file-select" class="btn ghost" title="切换要编辑的片子（工作目录内的 HTML）"></select>
+  <button class="btn primary" id="btn-open" title="用系统文件选择器打开任意位置的 PPT（原地编辑，保存写回原文件）">打开 PPT…</button>
+  <div class="tb-recent">
+    <button class="btn ghost" id="btn-recent" title="最近打开过的 PPT">最近 ▾</button>
+    <div class="recent-menu" id="recent-menu"></div>
+  </div>
+  <select id="file-select" class="btn ghost" title="同一 deck 目录下的其他 HTML（切换即原地打开）" style="display:none;"></select>
+  <span id="cur-path" class="path-chip" title="当前正在编辑的源文件（原地编辑，保存写回此处）">未打开</span>
   <select id="viewport-select" class="btn ghost" title="源设计稿视口比例（响应式稿关键：影响 measureSrc 的 iframe 尺寸与 slide 缩放）">
     <option value="16:10">视口 16:10（默认）</option>
     <option value="16:9">视口 16:9</option>
     <option value="9:16">视口 9:16（移动竖屏）</option>
     <option value="4:3">视口 4:3</option>
   </select>
-  <!-- 用 <label for=> 替代 JS .click()，Chrome 不再拦截程序触发的 file dialog -->
-  <label class="btn ghost" for="file-input" title="从本机导入任意 .html 文件（也可直接拖拽到编辑区）">打开</label>
+  <!-- 导入：浏览器拿不到拖入/选择的文件绝对路径，因此「导入副本」只在内存中编辑，保存时下载编辑版副本（不回写原文件）。如需原地保存请用「打开 PPT…」 -->
+  <label class="btn ghost" for="file-input" title="导入 .html 到内存编辑（保存时下载副本，不回写原文件）">导入副本</label>
   <input type="file" id="file-input" accept=".html,text/html" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
   <div class="tb-sep"></div>
   <button class="btn ghost" id="btn-undo" title="撤销上一步（⌘Z）" disabled>↶ 撤销</button>
@@ -282,6 +319,16 @@
     </div>
   </div>
   <div id="status">就绪</div>
+</div>
+
+<div id="guide">
+  <div class="g-card">
+    <h2>帆哥的<span class="accent">PPT</span>编辑器</h2>
+    <p>这是一个<strong>本地</strong> HTML 幻灯片编辑器。<br>你的 PPT 文件不会被复制、不会被改动，除非你点「保存」写回<strong>原文件</strong>。</p>
+    <p>历史快照、渲染产物、日志全部存在编辑器自己的文件夹里，<b>不会污染你的项目目录</b>。</p>
+    <button class="btn primary g-btn" id="btn-guide-open">打开 PPT…</button>
+    <div class="g-tip">支持：用「打开 PPT…」选任意位置的 <b>index.html / *.html</b> 幻灯片 · 也可把文件<strong>拖拽</strong>到此处（拖入为内存编辑，保存时下载副本）</div>
+  </div>
 </div>
 
 <div id="main">
@@ -347,8 +394,8 @@
 </div>
 <script>
 const LS_KEY = "fde_editor_draft_v1";
-const DEFAULT_FILE = "FDE认知片子-瑞士现代-v2.html";
-let currentFile = DEFAULT_FILE;  // 当前编辑的文件（相对 ALLOWED_ROOT 的路径）
+let currentFile = "";            // 当前编辑的文件名（basename）
+let currentFilePath = null;      // 当前编辑的源文件绝对路径（打开 PPT 后设置；null = 内存导入，保存走下载）
 let origDoc = null, origSlides = [], editedSlides = [], slideCount = 0;
 let loadedDoc = null;  // 当前已加载的源 doc（供视口下拉切换时 buildEditor 重用）
 let dirty = false;  // 是否有相对磁盘的未保存改动（仅 dirty 时才写草稿，避免每次刷新都弹草稿横幅）
@@ -883,33 +930,91 @@ async function save(){
     return;
   }
   try{
+    if(!currentFilePath){
+      // 内存导入的 deck（拖入 / 导入副本）：浏览器拿不到原文件绝对路径，无法回写原文件。
+      // 改为下载编辑版副本，明确不污染用户项目文件夹。
+      const blob = new Blob([html], {type:"text/html"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = (currentFile || "deck").replace(/\.html$/i, "") + "-编辑版.html";
+      a.click();
+      setStatus("已下载编辑版副本（拖入/导入的文件无法回写原文件；如需原地保存请用「打开 PPT…」）", "ok");
+      return;
+    }
     const r = await fetch("/api/save", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({file: currentFile, html})
+      body: JSON.stringify({file: currentFilePath, html})
     });
     const j = await r.json();
-    if(j.ok){ setStatus("已保存 ✓ "+j.bytes+" 字节", "ok"); localStorage.removeItem(LS_KEY); dirty = false; }
+    if(j.ok){ setStatus("已保存 ✓ 写回原文件 "+j.bytes+" 字节", "ok"); localStorage.removeItem(LS_KEY); dirty = false; }
     else setStatus("保存失败: "+j.error, "err");
   }catch(e){ setStatus("保存失败: "+e.message, "err"); }
 }
 
-// 加载源文件（file 缺省用 currentFile）
-async function loadFromServer(file){
-  currentFile = file || currentFile;
-  setStatus("读取中…");
-  const r = await fetch("/api/load?file=" + encodeURIComponent(currentFile));
+// 打开一个 deck（原地编辑）：path 为绝对路径。后端 /api/open 会设置 ACTIVE_FILE，
+// 之后所有保存/渲染/回滚都作用于该原文件，绝不复制、绝不污染用户文件夹。
+async function openDeck(path){
+  if(dirty && !confirm("当前有未保存改动，打开新文件将丢失这些改动。确定打开？")) return;
+  setStatus("打开中…");
+  const r = await fetch("/api/open?path=" + encodeURIComponent(path));
+  if(!r.ok){
+    let msg = "打开失败（可能不是有效的 .html deck）";
+    try{ const j = await r.json(); msg = "打开失败：" + (j.error||r.status); }catch(e){}
+    setStatus(msg, "err");
+    return;
+  }
   const text = await r.text();
   RAW = text;
   const doc = new DOMParser().parseFromString(text, "text/html");
   buildEditor(doc);
+  currentFilePath = path;
+  currentFile = path.split("/").pop();
+  dirty = false;
+  localStorage.removeItem(LS_KEY);
+  $("#guide").classList.add("hide");
+  $("#cur-path").textContent = path;
+  $("#cur-path").classList.add("open");
+  $("#file-select").style.display = "";
   if(slideCount === 0){
-    setStatus("已载入 · "+currentFile+"（该文件无可编辑幻灯片，可能不是 deck 结构）", "err");
+    setStatus("已打开 · "+currentFile+"（该文件无可编辑幻灯片，可能不是 deck 结构）", "err");
   } else {
-    setStatus("已载入 "+slideCount+" 页 · "+currentFile, "ok");
+    setStatus("已打开 "+slideCount+" 页 · 原地编辑 "+currentFile, "ok");
   }
+  // 浏览器草稿：仅作可选项，绝不静默覆盖磁盘最新版本
+  const draft = localStorage.getItem(LS_KEY);
+  if(draft){
+    $("#banner").style.display = "flex";
+    $("#bn-restore").onclick = ()=>{
+      RAW = draft;
+      const doc = new DOMParser().parseFromString(draft, "text/html");
+      buildEditor(doc);
+      dirty = true;  // 恢复的内容相对磁盘算未保存，避免 autosave 立刻清掉它
+      $("#banner").style.display = "none";
+      setStatus("已恢复浏览器草稿（尚未写盘，点保存才生效）", "ok");
+    };
+    $("#bn-discard").onclick = ()=>{
+      localStorage.removeItem(LS_KEY);
+      $("#banner").style.display = "none";
+      setStatus("已放弃浏览器草稿，继续使用磁盘最新版本", "ok");
+    };
+  } else {
+    $("#banner").style.display = "none";
+  }
+  // 刷新「最近」列表与「同 deck 其他 html」下拉
+  refreshRecent();
+  getFiles();
 }
 
-// 从任意来源的 HTML 文本载入（文件选择器 / 拖拽 / 粘贴），filename 决定下次保存写到工作目录哪个文件
+// 用系统文件选择器打开（macOS 原生对话框，能拿到绝对路径 → 真正的原地编辑）
+async function pickAndOpen(){
+  const r = await fetch("/api/pick?type=file");
+  const j = await r.json();
+  if(!j.path){ return; }   // 用户取消
+  await openDeck(j.path);
+}
+
+// 从任意来源的 HTML 文本载入（文件选择器 / 拖拽 / 粘贴）：内存编辑模式。
+// 浏览器拿不到这些来源的绝对路径，因此无法回写原文件——保存时改为下载编辑版副本。
 async function loadFromContent(filename, text){
   if(dirty && !confirm("当前有未保存改动，加载新文件将丢失这些改动。确定加载？")) return;
   try{
@@ -917,19 +1022,16 @@ async function loadFromContent(filename, text){
     const doc = new DOMParser().parseFromString(text, "text/html");
     buildEditor(doc);
     currentFile = filename;
-    // 文件选择器里如果没这个选项就追加（标「未保存」区分）
-    const sel = $("#file-select");
-    if(![...sel.options].some(o=>o.value===filename)){
-      const o = document.createElement("option");
-      o.value = filename; o.textContent = filename + " （未保存）";
-      sel.appendChild(o);
-    }
-    sel.value = filename;
+    currentFilePath = null;   // 内存模式：保存走下载，绝不回写用户文件
+    $("#guide").classList.add("hide");
+    $("#cur-path").textContent = "内存编辑（保存将下载副本）· " + filename;
+    $("#cur-path").classList.remove("open");
+    $("#file-select").style.display = "none";
     dirty = true;  // 还没落盘，相对磁盘算未保存
     if(slideCount === 0){
       setStatus("已导入 · "+filename+"（无可编辑幻灯片，可能不是 deck 结构）", "err");
     } else {
-      setStatus("已导入 "+slideCount+" 页 · "+filename+"（点保存即可写入工作目录）", "ok");
+      setStatus("已导入 "+slideCount+" 页 · "+filename+"（保存将下载编辑版副本）", "ok");
     }
   }catch(e){ setStatus("导入失败: "+e.message, "err"); }
 }
@@ -937,7 +1039,7 @@ async function loadFromContent(filename, text){
 // 渲染
 async function startRender(){
   const r = await fetch("/api/render", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({file: currentFile})});
+    body: JSON.stringify({file: currentFilePath || currentFile})});
   const j = await r.json();
   if(j.ok){ $("#progress").style.display="block"; pollRender(); }
   else setStatus(j.msg||"渲染未启动", "err");
@@ -1427,7 +1529,7 @@ $("#btn-export").addEventListener("click", ()=>{
 $("#btn-export-pptx").addEventListener("click", async ()=>{
   const mode = $("#export-mode").value || "editable";
   const r = await fetch("/api/export-pptx", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({file: currentFile, mode})});
+    body: JSON.stringify({file: currentFilePath || currentFile, mode})});
   const j = await r.json();
   if(j.ok){
     $("#p-title").textContent = (mode === "image" ? "导出 PPT（高清整页图）" : "导出 PPT（可编辑版）");
@@ -1467,7 +1569,19 @@ function pollExport(){
   }).catch(()=>setTimeout(pollExport,2000));
 }
 $("#btn-reload").addEventListener("click", ()=>{
-  if(confirm("放弃当前所有未保存改动，从文件重新读取？")) loadFromServer();
+  if(!confirm("放弃当前所有未保存改动，重新读取？")) return;
+  if(currentFilePath){
+    openDeck(currentFilePath);   // 原地重新读取原文件
+  } else {
+    // 内存导入模式：从已导入的 RAW 重建（无原文件可读）
+    try{
+      RAW = RAW;
+      const doc = new DOMParser().parseFromString(RAW, "text/html");
+      buildEditor(doc);
+      dirty = false;
+      setStatus("已重读导入内容（内存模式）", "ok");
+    }catch(e){ setStatus("重读失败: "+e.message, "err"); }
+  }
 });
 // 上传到飞书云空间：当前 HTML（已保存版本）或已导出的 PPTX
 // 先判断本机是否已授权绑定飞书账号；未授权则弹出引导，授权后再重试
@@ -1489,7 +1603,7 @@ function uploadToFeishu(kind){
 function doUploadFeishu(kind, label){
   setStatus(`正在上传${label}到飞书云空间…`, "busy");
   fetch("/api/upload-feishu", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({file: currentFile, kind})})
+    body: JSON.stringify({kind})})
     .then(r=>r.json()).then(d=>{
       if(d.ok && d.url){
         if(navigator.clipboard){ navigator.clipboard.writeText(d.url).catch(()=>{}); }
@@ -1550,41 +1664,92 @@ $("#auth-retry").addEventListener("click", ()=>{
 })();
 $("#btn-history").addEventListener("click", openHistory);
 
-// 文件列表 / 切换
+// 文件列表 / 切换（同一 deck 目录下的其他 .html，切换即原地打开）
 async function getFiles(){
+  const sel = $("#file-select");
   try{
     const r = await fetch("/api/files");
     const j = await r.json();
-    const sel = $("#file-select");
     sel.innerHTML = "";
+    if(!j.length){
+      sel.style.display = "none";
+      return;
+    }
+    sel.style.display = "";
     j.forEach(f=>{
       const o = document.createElement("option");
-      o.value = f.rel; o.textContent = f.rel;
+      o.value = f.abs; o.textContent = f.rel;   // value 存绝对路径，切换时直接 openDeck
       sel.appendChild(o);
     });
-    sel.value = currentFile;
+    if(currentFilePath) sel.value = currentFilePath;
     sel.onchange = ()=> switchFile(sel.value);
-    // 视口下拉：响应式源（EP25 类）按浏览器实际视口比例渲染（默认 16:10 → 9:16 立即还原源截图）
-    const vsel = $("#viewport-select");
-    vsel.value = viewportKey;
-    vsel.onchange = ()=>{
-      viewportKey = vsel.value;
-      if(loadedDoc){
-        buildEditor(loadedDoc);          // 用新视口重新探测 sw/sh + 重算 --sc + 重渲
-        setStatus("视口已切换到 " + viewportKey + "（" + (VIEWPORTS[viewportKey].w) + "×" + (VIEWPORTS[viewportKey].h) + "）", "ok");
-      }
-    };
   }catch(e){ setStatus("读取文件列表失败", "err"); }
+  // 视口下拉：响应式源（EP25 类）按浏览器实际视口比例渲染（默认 16:10 → 9:16 立即还原源截图）
+  const vsel = $("#viewport-select");
+  vsel.value = viewportKey;
+  vsel.onchange = ()=>{
+    viewportKey = vsel.value;
+    if(loadedDoc){
+      buildEditor(loadedDoc);          // 用新视口重新探测 sw/sh + 重算 --sc + 重渲
+      setStatus("视口已切换到 " + viewportKey + "（" + (VIEWPORTS[viewportKey].w) + "×" + (VIEWPORTS[viewportKey].h) + "）", "ok");
+    }
+  };
 }
-async function switchFile(rel){
-  if(rel === currentFile) return;
-  if(dirty && !confirm("当前有未保存改动，切换文件将丢失这些改动。确定切换？")){
-    $("#file-select").value = currentFile; return;
-  }
-  await loadFromServer(rel);
+async function switchFile(abs){
+  if(abs === currentFilePath) return;
+  await openDeck(abs);   // 同一 deck 目录内切换，仍是原地编辑
 }
 
-// 「打开文件」label 用 <label for=file-input> 直接触发原生 file dialog（避开 JS .click() 被浏览器拦截）
+// 「打开 PPT…」按钮（系统原生对话框，真正拿到绝对路径 → 原地编辑）
+$("#btn-open").addEventListener("click", pickAndOpen);
+$("#btn-guide-open").addEventListener("click", pickAndOpen);
+
+// 「最近打开」下拉
+async function refreshRecent(){
+  const menu = $("#recent-menu");
+  try{
+    const r = await fetch("/api/recent");
+    const list = await r.json();
+    menu.innerHTML = "";
+    if(!list.length){
+      menu.innerHTML = '<div class="recent-empty">还没有最近打开过的 PPT</div>';
+      return;
+    }
+    list.forEach(p=>{
+      const row = document.createElement("div");
+      row.className = "recent-item";
+      const span = document.createElement("span");
+      span.className = "ric-path"; span.textContent = p; span.title = p;
+      const del = document.createElement("button");
+      del.className = "ric-del"; del.textContent = "×"; del.title = "从最近列表移除";
+      del.onclick = (e)=>{ e.stopPropagation(); removeRecent(p); };
+      row.appendChild(span); row.appendChild(del);
+      row.onclick = ()=>{ menu.classList.remove("open"); openDeck(p); };
+      menu.appendChild(row);
+    });
+  }catch(e){ menu.innerHTML = '<div class="recent-empty">读取最近列表失败</div>'; }
+}
+async function removeRecent(path){
+  try{
+    await fetch("/api/recent-remove", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({path})});
+  }catch(e){}
+  refreshRecent();
+}
+$("#btn-recent").addEventListener("click", (e)=>{
+  e.stopPropagation();
+  const menu = $("#recent-menu");
+  if(!menu.dataset.loaded){ refreshRecent(); menu.dataset.loaded = "1"; }
+  menu.classList.toggle("open");
+});
+document.addEventListener("click", (e)=>{
+  const menu = $("#recent-menu");
+  if(menu.classList.contains("open") && !menu.contains(e.target) && e.target !== $("#btn-recent")){
+    menu.classList.remove("open");
+  }
+});
+
+// 「导入副本」label 用 <label for=file-input> 直接触发原生 file dialog（避开 JS .click() 被浏览器拦截）
 $("#file-input").addEventListener("change", async (e)=>{
   const file = e.target.files && e.target.files[0];
   if(!file) return;
@@ -1729,28 +1894,9 @@ $("#editor").addEventListener("input", ()=>{ dirty = true; requestPushHistory();
 setInterval(autosave, 10000);
 window.addEventListener("beforeunload", autosave);
 
-// 启动：永远先从磁盘（服务器）载入权威最新版本，草稿只是「可选恢复」，绝不静默覆盖
-getFiles().then(()=> loadFromServer(currentFile)).then(()=>{
-  const draft = localStorage.getItem(LS_KEY);
-  if(draft){
-    // 编辑器此刻已显示磁盘最新内容；草稿仅作可选项——忽略横幅 = 继续用磁盘版，
-    // 只有显式点「恢复草稿」才会用浏览器旧草稿覆盖。这就杜绝了「刷新→被迫恢复→回滚」的陷阱。
-    $("#banner").style.display = "flex";
-    $("#bn-restore").addEventListener("click", ()=>{
-      RAW = draft;
-      const doc = new DOMParser().parseFromString(draft, "text/html");
-      buildEditor(doc);
-      dirty = true;  // 恢复的内容相对磁盘算未保存，避免 autosave 立刻清掉它
-      $("#banner").style.display = "none";
-      setStatus("已恢复浏览器草稿（尚未写盘，点保存才生效）", "ok");
-    });
-    $("#bn-discard").addEventListener("click", ()=>{
-      localStorage.removeItem(LS_KEY);
-      $("#banner").style.display = "none";
-      setStatus("已放弃浏览器草稿，继续使用磁盘最新版本", "ok");
-    });
-  }
-});
+// 启动：先准备好文件列表与最近列表；不自动打开任何文件，显示引导遮罩，由用户「打开 PPT…」。
+// 草稿只在该 deck 真正被打开后再做「可选恢复」判断（见 openDeck）。
+getFiles().then(refreshRecent);
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.21
+version: 1.0.22
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -90,6 +90,25 @@ fde_editor/帆哥PPT编辑器一键启动.command /path/to/deck            # 参
 >
 > **结论**：编辑 12-FDE研究 里的 deck → 直接双击 fde_editor 里的启动器；编辑 EP27 等
 > 其他项目的 deck → 把启动器复制到该 deck 目录双击（已为 EP27 放好一份）。
+
+> **v1.0.22 架构升级：编辑器彻底独立化 + 原地编辑不污染。**
+> 用户两诉求：① 根目录不再绑死 FDE 项目，改成独立文件夹「帆哥 PPT 编辑器」；
+> ② 编辑其他 PPT 时不能污染用户项目文件夹。
+>
+> **根因级修法（open-in-place 模式）**：
+> 1. 编辑器本体独立放在 `~/Documents/帆哥 PPT 编辑器/`，不再依赖任何具体项目的根目录。
+> 2. 后端 `ALLOWED_ROOT` 初始=编辑器自家目录；点「打开 PPT…」（macOS 原生选文件对话框，
+>    `/api/pick` → `/api/open`）后，`set_active` 把 `ALLOWED_ROOT` 动态切到**该 deck 所在目录**，
+>    之后的保存 / 渲染 / 回滚全部作用于原文件——**不复制、不移动、写回原路径**。
+> 3. 历史快照、渲染产物、日志**全部**存编辑器自家目录（`EDITOR_HOME/.history/<deckKey>/`、
+>    `EDITOR_HOME/.render/<deckKey>/`、`EDITOR_HOME/editor.log`），用 `sha1(abs_path)[:12]` 做命名空间，
+>    不同目录的同名 `index.html` 互不串台；**绝不**在用户项目文件夹里写 `.history` 或副本。
+> 4. 前端改为：启动显示引导页 → 「打开 PPT…」/「最近」下拉 / 拖拽导入。拖拽与「导入副本」因浏览器
+>    拿不到原文件绝对路径，保存时改为下载编辑版副本（不回写）；只有「打开 PPT…」才是真正的原地写回。
+> 5. 启动器 `帆哥PPT编辑器一键启动.command` 双击即启动（root 已随 deck 自动切换，无需 cd 方案、无需重启）。
+>
+> **结论**：以后任何 HTML 幻灯片，直接双击「帆哥 PPT 编辑器」启动器 → 打开 PPT… → 改字 → 保存写回原文件，
+> 你的项目目录保持干净。
 
 ## 关键设计
 
