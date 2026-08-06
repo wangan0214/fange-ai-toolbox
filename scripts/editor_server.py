@@ -19,6 +19,7 @@
   GET  /api/history-file?file=&snap= -> 读取某个历史快照内容（预览/下载）
   POST /api/rollback       -> 把某个历史快照原子写回源文件（回滚前自动留快照）
   POST /api/upload-feishu  -> 把当前 HTML 或已导出 PPTX 上传到飞书云空间（lark-cli drive +upload）
+  POST /api/gen-ai         -> Step1 云端生成：主题/文档 → 编辑器规范 deck（云端 LLM 走 Freemium 配额，离线兜底无限）
 
 纯本地 (127.0.0.1)，数据零外发；仅「上传飞书云空间」会调用本机 lark-cli 与飞书交互。
 """
@@ -40,6 +41,12 @@ try:
 except Exception:
     build_editable_pptx = None
     build_image_pptx = None
+
+# Step1 云端生成引擎（LLM 桥接，离线兜底；收费基座门控在云端 LLM 路径）
+try:
+    import gen_llm
+except Exception:
+    gen_llm = None
 
 # ---------- 默认值（可被 CLI 参数覆盖） ----------
 # 编辑器自家目录：scripts/ 的上级（即「帆哥 PPT 编辑器/」）。
@@ -96,6 +103,11 @@ PW_NODE_MODULES = (os.environ.get("PW_NODE_MODULES")
                    or "/Users/fanshuai/.workbuddy/binaries/node/workspace/node_modules")
 HISTORY_BASE = os.path.join(EDITOR_HOME, ".history")   # 历史快照存这里，不进用户文件夹
 RENDER_BASE = os.path.join(EDITOR_HOME, ".render")     # 渲染/导出产物存这里，不进用户文件夹
+GENERATED_DIR = os.path.join(EDITOR_HOME, "generated") # AI 生成的 deck 落这里，不污染用户项目
+# 收费基座（Freemium）：云端 LLM 生成走配额门控；离线兜底无限（本地编辑永久免费）。
+GEN_FREE_LIMIT = int(os.environ.get("GEN_FREE_LIMIT", "3"))   # 免费档可用云端生成次数
+UPGRADE_URL = os.environ.get("UPGRADE_URL", "https://fanage.example/pricing")  # 占位，上线前替换为真实定价页
+GEN_QUOTA_FILE = os.path.join(EDITOR_HOME, ".gen_quota.json")
 ACTIVE_FILE = None     # 当前打开的 deck 绝对路径（None = 还没打开）
 ACTIVE_DIR = None      # 当前打开的 deck 所在目录
 ROOT = ALLOWED_ROOT                # 静态文件根（未打开时是编辑器自家目录；打开后是 deck 目录，用于服务 deck 配图）
@@ -907,6 +919,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             t = threading.Thread(target=run_export_file, args=(fp, kind), daemon=True)
             t.start()
             self._send(200, json.dumps({"ok": True, "msg": f"已启动导出（{kind}）"}))
+        elif self.path == "/api/gen-ai":
+            self._gen_ai(data)
         elif self.path == "/api/rollback":
             rel = data.get("file", DEFAULT_FILE)
             snap = data.get("snap", "")
@@ -998,6 +1012,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    # ---------- Step1 云端生成引擎（LLM 桥接 + 离线兜底 + Freemium 门控） ----------
+    def _gen_quota(self):
+        try:
+            with open(GEN_QUOTA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _gen_ai(self, data):
+        if gen_llm is None:
+            self._send(500, json.dumps({"ok": False, "msg": "生成引擎未加载（gen_llm 缺失）"}))
+            return
+        topic = (data.get("topic") or "").strip()
+        subtitle = (data.get("subtitle") or "").strip()
+        doc = (data.get("doc") or "").strip()
+        if not topic:
+            self._send(400, json.dumps({"ok": False, "msg": "请填写主题"}))
+            return
+
+        used_llm = gen_llm.HAS_LLM
+        # 云端 LLM 路径走 Freemium 配额门控；离线兜底无限（本地编辑永久免费）
+        if used_llm:
+            ip = self.client_address[0]
+            quota = self._gen_quota()
+            used = quota.get(ip, 0)
+            if used >= GEN_FREE_LIMIT:
+                self._send(200, json.dumps({
+                    "ok": False,
+                    "need_upgrade": True,
+                    "used": used,
+                    "limit": GEN_FREE_LIMIT,
+                    "upgrade_url": UPGRADE_URL,
+                    "msg": f"免费云端生成已用完（{used}/{GEN_FREE_LIMIT}），升级后无限生成",
+                }))
+                return
+
+        os.makedirs(GENERATED_DIR, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        out = os.path.join(GENERATED_DIR, f"gen-{ts}.html")
+        try:
+            html, used_llm = gen_llm.generate(topic, subtitle, doc, out=out)
+        except Exception as e:  # noqa: BLE001
+            self._send(500, json.dumps({"ok": False, "msg": f"生成失败：{e}"}))
+            return
+
+        # 仅云端 LLM 成功才计配额
+        if used_llm:
+            quota = self._gen_quota()
+            ip = self.client_address[0]
+            quota[ip] = quota.get(ip, 0) + 1
+            try:
+                with open(GEN_QUOTA_FILE, "w", encoding="utf-8") as f:
+                    json.dump(quota, f)
+            except Exception:
+                pass
+
+        self._send(200, json.dumps({
+            "ok": True,
+            "path": out,
+            "used_llm": used_llm,
+            "used": quota.get(ip, 0) if used_llm else 0,
+            "limit": GEN_FREE_LIMIT,
+            "msg": "云端 AI 生成完成" if used_llm else "本地草稿模式（未配置 LLM_API_KEY，走离线兜底）",
+        }))
 
     def log_message(self, *a):
         pass

@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.25
+version: 1.0.26
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -139,6 +139,21 @@ outputs:
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.26（2026-08-06）P1：生成引擎上云（Step1 落地）—— AI 生成入口 + 云端 LLM 桥接 + Freemium 门控
+
+**动机**：按"1和2都继续"推进生成引擎上云（#2）。目标：在编辑器里点「✨ AI 生成」输入主题/文档 → 直接产出可编辑 deck → 进入 Step2 本地精修；云端 LLM 作为 Freemium 收费基座，本地编辑永久免费。
+
+**落地**：
+- `scripts/gen_llm.py`：OpenAI 兼容 LLM 桥接（env 配置 `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`，`urllib` 零额外依赖）+ **离线兜底大纲**（无 key 或调用失败 → 用 `gen_deck.build_deck` 产可用 deck，闭环不断）。输出契约与 `gen_deck` 完全一致：`生成产物 === 编辑器输入`。
+- `editor_server.py`：新增 `POST /api/gen-ai` + `_gen_ai`（写 `generated/<ts>.html`，复用 `openDeck` 打开）；**Freemium 门控只在云端 LLM 路径生效**（`GEN_FREE_LIMIT` 默认 3，超额返回 `need_upgrade` + `upgrade_url`），**离线兜底无限**（本地编辑永久免费，符合 PRD 收费边界）。
+- `editor.html`：顶栏「✨ AI 生成」按钮 + 弹窗（主题/副标题/参考文档）+ JS（生成后复用 `openDeck` 打开精修；超额弹升级提示）。
+
+**验证（端到端冒烟，venv python 起服务）**：
+- 离线兜底：生成 7 页 deck → `GET /api/open` 200 → 含 `section.slide` 与标题 ✅。
+- 配额门控：`GEN_FREE_LIMIT=0` + 假 key → 首次即返回 `need_upgrade` + `upgrade_url` ✅。
+
+**沉淀**：playbook §13 能力基线补「AI 生成入口（云端 LLM + 离线兜底 + Freemium 门控）」；桥接契约文档 MVP 补「云端 LLM 桥接」一节。
 
 ### v1.0.25（2026-08-06）P1：PPTX 导出解锁（可编辑三层 + 图片模式，本地离线）
 

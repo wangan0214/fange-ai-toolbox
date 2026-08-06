@@ -291,6 +291,7 @@
 <div id="topbar">
   <h1>帆哥的<span class="accent">PPT</span>编辑器</h1>
   <button class="btn primary" id="btn-open" title="用系统文件选择器打开任意位置的 PPT（原地编辑，保存写回原文件）">打开 PPT…</button>
+  <button class="btn" id="btn-ai" title="用 AI 把主题/文档生成一份可编辑的 PPT 草稿（Step1 云端生成 → Step2 本地精修）">✨ AI 生成</button>
   <div class="tb-recent">
     <button class="btn ghost" id="btn-recent" title="最近打开过的 PPT">最近 ▾</button>
     <div class="recent-menu" id="recent-menu"></div>
@@ -423,6 +424,41 @@
     </div>
     <textarea id="code-area" spellcheck="false" style="flex:1;width:100%;border:0;outline:0;resize:none;padding:14px;background:#0b0b0e;color:#d6e0ff;font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.55;"></textarea>
     <div id="code-msg" style="padding:8px 16px;font-size:12px;color:var(--ui-muted);border-top:1px solid var(--ui-line);min-height:18px;"></div>
+  </div>
+</div>
+<!-- AI 生成（Step1 云端生成入口）：主题/文档 → 编辑器规范 deck，生成后复用 openDeck 打开精修 -->
+<div id="ai-modal" style="display:none;position:fixed;inset:0;z-index:75;background:rgba(0,0,0,.66);backdrop-filter:blur(2px);">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,94vw);display:flex;flex-direction:column;background:var(--ui-panel);border:1px solid var(--ui-line);border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6);">
+    <div style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--ui-line);">
+      <h3 style="margin:0;font-size:16px;color:var(--ui-text);">✨ AI 生成 PPT</h3>
+      <span id="ai-mode" style="font-size:12px;color:var(--ui-muted);">…</span>
+      <div style="flex:1;"></div>
+      <button class="btn ghost" id="ai-cancel" style="padding:6px 12px;">取消</button>
+    </div>
+    <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label style="display:block;font-size:13px;color:var(--ui-text);margin-bottom:6px;">主题 <span style="color:var(--red);">*</span></label>
+        <input id="ai-topic" placeholder="例如：AI 赚钱的三条暗线" style="width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--ui-line);background:var(--ui-bg);color:var(--ui-text);font-size:14px;">
+      </div>
+      <div>
+        <label style="display:block;font-size:13px;color:var(--ui-text);margin-bottom:6px;">副标题（可选）</label>
+        <input id="ai-subtitle" placeholder="例如：帆哥 · 自媒体全链路 v2.0" style="width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--ui-line);background:var(--ui-bg);color:var(--ui-text);font-size:14px;">
+      </div>
+      <div>
+        <label style="display:block;font-size:13px;color:var(--ui-text);margin-bottom:6px;">参考文档（可选，粘贴文本，最多约 6000 字）</label>
+        <textarea id="ai-doc" rows="4" placeholder="把要提炼的文档/大纲粘贴到这里，AI 会据此组织幻灯片" style="width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--ui-line);background:var(--ui-bg);color:var(--ui-text);font-size:13px;resize:vertical;line-height:1.5;"></textarea>
+      </div>
+      <div id="ai-msg" style="font-size:12px;color:var(--ui-muted);min-height:16px;"></div>
+      <div id="ai-upgrade" style="display:none;padding:12px 14px;border:1px solid var(--red);border-radius:10px;background:rgba(255,90,31,.08);">
+        <div style="font-size:13px;color:var(--ui-text);font-weight:600;margin-bottom:6px;">免费云端生成已用完</div>
+        <div style="font-size:12px;color:var(--ui-muted);margin-bottom:10px;" id="ai-upgrade-detail"></div>
+        <a id="ai-upgrade-link" href="#" target="_blank" rel="noopener" class="btn primary" style="text-decoration:none;display:inline-block;">升级解锁无限生成 →</a>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 18px;border-top:1px solid var(--ui-line);">
+      <button class="btn ghost" id="ai-close2" style="padding:8px 14px;">关闭</button>
+      <button class="btn primary" id="ai-generate" style="padding:8px 18px;">⚡ 生成草稿</button>
+    </div>
   </div>
 </div>
 
@@ -1770,6 +1806,55 @@ function pollFileExport(kind, label){
 $("#btn-export-pdf").addEventListener("click", ()=>triggerFileExport("pdf","PDF"));
 $("#btn-export-png").addEventListener("click", ()=>triggerFileExport("png","PNG 包"));
 $("#btn-export-long").addEventListener("click", ()=>triggerFileExport("longshot","长图"));
+
+// ---------- AI 生成（Step1 云端生成入口） ----------
+function openAiModal(){
+  $("#ai-modal").style.display = "flex";
+  $("#ai-msg").textContent = ""; $("#ai-msg").style.color = "var(--ui-muted)";
+  $("#ai-upgrade").style.display = "none";
+  $("#ai-topic").focus();
+}
+function closeAiModal(){ $("#ai-modal").style.display = "none"; }
+
+$("#btn-ai").addEventListener("click", openAiModal);
+$("#ai-cancel").addEventListener("click", closeAiModal);
+$("#ai-close2").addEventListener("click", closeAiModal);
+$("#ai-modal").addEventListener("click", (e)=>{ if(e.target.id==="ai-modal") closeAiModal(); });
+
+$("#ai-generate").addEventListener("click", async ()=>{
+  const topic = $("#ai-topic").value.trim();
+  if(!topic){ $("#ai-msg").style.color="var(--red)"; $("#ai-msg").textContent = "请填写主题"; return; }
+  const subtitle = $("#ai-subtitle").value.trim();
+  const doc = $("#ai-doc").value;
+  $("#ai-generate").disabled = true; $("#ai-generate").textContent = "生成中…";
+  $("#ai-msg").style.color = "var(--ui-muted)"; $("#ai-msg").textContent = "正在生成草稿…";
+  try{
+    const r = await fetch("/api/gen-ai", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({topic, subtitle, doc})
+    });
+    const j = await r.json();
+    if(j.ok){
+      $("#ai-generate").disabled=false; $("#ai-generate").textContent="⚡ 生成草稿";
+      setStatus((j.used_llm ? "云端 AI 生成完成" : "本地草稿已生成（未配置 LLM key）") +
+                (j.used_llm ? ` (${j.used}/${j.limit})` : ""), "ok");
+      closeAiModal();
+      openDeck(j.path);   // 复用打开流程，进入 Step2 本地精修
+    } else if(j.need_upgrade){
+      $("#ai-upgrade").style.display = "block";
+      $("#ai-upgrade-detail").textContent = j.msg;
+      $("#ai-upgrade-link").href = j.upgrade_url || "#";
+      $("#ai-generate").disabled=false; $("#ai-generate").textContent="⚡ 生成草稿";
+    } else {
+      $("#ai-msg").style.color="var(--red)"; $("#ai-msg").textContent = j.msg || "生成失败";
+      $("#ai-generate").disabled=false; $("#ai-generate").textContent="⚡ 生成草稿";
+    }
+  }catch(e){
+    $("#ai-msg").style.color="var(--red)"; $("#ai-msg").textContent = "请求失败：" + e.message;
+    $("#ai-generate").disabled=false; $("#ai-generate").textContent="⚡ 生成草稿";
+  }
+});
 $("#btn-reload").addEventListener("click", ()=>{
   if(!confirm("放弃当前所有未保存改动，重新读取？")) return;
   if(currentFilePath){

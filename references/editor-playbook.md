@@ -128,10 +128,12 @@
 - 历史快照回滚 / 三层可编辑 PPT 导出 / 飞书云空间上传
 - 单会话 Playwright 渲染（无头 Chrome 起一次逐页截图，已切 Node 版）
 - **PDF / PNG 包 / 长截图导出（纯 PIL 本地合并，无需新依赖）（v1.0.24）**
+- **AI 生成入口（Step1 上云，v1.0.26）**：顶栏「✨ AI 生成」→ 主题/文档 → 同契约 deck → 复用打开流程进 Step2 精修。`scripts/gen_llm.py` 云端 LLM（OpenAI 兼容，env 配置 key/base/model，urllib 零依赖）+ 离线兜底（无 key 自动走 `gen_deck`）。`POST /api/gen-ai`：`generated/<ts>.html`；**Freemium 门控只在云端 LLM 路径生效**（`GEN_FREE_LIMIT` 默认 3，超额 `need_upgrade` + `upgrade_url`），**离线兜底无限**（本地编辑永久免费）。
 
 **⏳ P1 待做**
 - AI 协作闭环（批注 / 生成 prompt）
 - SVG / Canvas 编辑
+- 多模态生成输入（图片 / URL）
 
 **✅ PPTX 导出已解锁（v1.0.25）**：可编辑三层（干净背景 + 可改色块 + 366 个可改字文本框/25 页）+ 图片模式，均本地离线可用（venv `fange-editor`）。若 venv 缺失，启动器回退托管 python，PPTX 按钮会提示需安装 `python-pptx`（联网一次性 `pip install python-pptx playwright` 即可恢复，无需走云端）。
 
