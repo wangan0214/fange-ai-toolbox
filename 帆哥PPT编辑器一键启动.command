@@ -6,14 +6,23 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 PORT=8731
 
-# 选 python：优先本目录 venv，否则系统 python3
+# 选 python：优先本目录 venv，其次托管的 python（自带 PIL + 已验证运行环境），否则系统 python3
+MPY="/Users/fanshuai/.workbuddy/binaries/python/versions/3.13.12/bin/python3"
 if [ -x "$DIR/.venv/bin/python3" ]; then
   PY="$DIR/.venv/bin/python3"
+elif [ -x "$MPY" ]; then
+  PY="$MPY"
 elif command -v python3 >/dev/null 2>&1; then
   PY="python3"
 else
   osascript -e 'display dialog "未找到 python3，无法启动编辑器。" buttons {"好"} default button "好"' 2>/dev/null
   exit 1
+fi
+# 校验该 python 能 import PIL（PDF/PNG/长图导出依赖）；不能则回退到托管 python
+if ! "$PY" -c "import PIL" >/dev/null 2>&1; then
+  if [ -x "$MPY" ] && [ "$PY" != "$MPY" ]; then
+    PY="$MPY"
+  fi
 fi
 
 # 已在运行？（root 自动随「打开的 deck」切换，无需重启）
