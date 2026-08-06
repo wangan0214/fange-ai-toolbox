@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.23
+version: 1.0.24
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -139,6 +139,16 @@ outputs:
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.24（2026-08-06）P1：PDF / PNG 包 / 长截图导出 + 渲染管线切 Node-Playwright
+
+**动机**：按"12345 全都开始做"推进 P1。用户要"可分享/可打印"的导出形态，纯本地（隐私锚点）不能只给 PPTX。新增三种零依赖导出：① PDF（16:9，PIL 合并每页 PNG）② PNG 包（zipfile 打包预览 PNG）③ 长图（PIL 竖排拼长 PNG）。后端 `run_export_file` 通用化（pdf/png/longshot → 置 `pdf_ready/png_ready/long_ready` + `artifact_name/path/kind`），前端「更多 ▾」加三个按钮 + `pollFileExport` 轮询下载。
+
+**渲染管线切 Node（关键修复）**：本机 Python 环境**未装 playwright 且无 pip 网络**，原 `render_slides_pw.py` 渲染器实际不可用，连带 PPTX 导出也被拖垮。新增 `scripts/render_slides_pw.mjs`（Node-Playwright + 系统 Chrome，`createRequire(绝对路径)` 解析包，`PW_NODE_MODULES` 传给 node），CLI/输出契约与旧 Python 版一致；`render_all_pw` 改为 `subprocess` 调 `node render_slides_pw.mjs`。**端到端冒烟（真实 25 页 deck）三导出全过**：PDF 3.27MB、PNG 包 2.74MB、长图 3.28MB，magic 校验全 OK。
+
+**已知阻断（PPTX 导出）**：`build_pptx` 依赖 `python-pptx`，本机同样未装且无 pip 网络 → **当前 PPTX 导出不可用**。需 `pip install python-pptx`（或改写为纯 PIL 生成 pptx 容器）后才能恢复。已记入 playbook §13。
+
+**沉淀**：playbook §12 补「服务端渲染管线已切 Node」说明；§13 标记 PDF/PNG/长截图已完成 + PPTX 阻断项。
 
 ### v1.0.23（2026-08-06）P0：拖拽缩放 handle + 代码视图兜底 + Playwright 真机测试法
 

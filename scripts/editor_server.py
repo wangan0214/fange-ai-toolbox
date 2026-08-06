@@ -9,6 +9,10 @@
   POST /api/render         -> 后台渲染当前文件全部 PNG（单会话 Playwright）
   POST /api/export-pptx    -> 后台渲染 + 打包成 .pptx（16:9）
   GET  /api/download-pptx  -> 下载生成的 .pptx
+  POST /api/export-pdf     -> 后台渲染 + 合并成 16:9 PDF（纯 PIL，本地）
+  POST /api/export-png     -> 后台渲染 + 打包预览 PNG 为 zip
+  POST /api/export-longshot-> 后台渲染 + 竖排拼长图 PNG
+  GET  /api/download-file  -> 下载上述通用导出产物（pdf/zip/png）
   GET  /api/render-status  -> 渲染/导出进度
   GET  /api/root           -> 返回当前实例的 root（供一键启动脚本检测并自动重启）
   GET  /api/history?file=  -> 列出该文件的历史快照
@@ -25,6 +29,7 @@ import os
 import sys
 import subprocess
 import threading
+import zipfile
 import re
 import time
 import argparse
@@ -72,7 +77,23 @@ _args = _parse_args()
 ALLOWED_ROOT = os.path.abspath(_args.root)   # 初始 = 编辑器自家目录；打开 deck 后切到该 deck 目录
 PORT = _args.port
 DEFAULT_FILE = _args.default_file or "index.html"
-RENDER_PW = os.path.join(EDITOR_HOME, "scripts", "render_slides_pw.py")
+RENDER_PW = os.path.join(EDITOR_HOME, "scripts", "render_slides_pw.mjs")
+# 渲染器走 Node-Playwright（本机 Python 环境缺 playwright 且无 pip 网络；Node-Playwright + 系统 Chrome 已就绪）。
+# 优先用托管的 node，否则回退 PATH 上的 node；PW_NODE_MODULES 指向已装的 playwright 包。
+def _detect_node():
+    for cand in ("/Users/fanshuai/.workbuddy/binaries/node/versions/22.22.2/bin/node",
+                 "/Users/fanshuai/.workbuddy/binaries/node/workspace/node_modules/.bin/node",
+                 "node"):
+        if cand == "node":
+            from shutil import which
+            p = which("node")
+            return p
+        if os.path.exists(cand):
+            return cand
+    return "node"
+NODE_BIN = _detect_node()
+PW_NODE_MODULES = (os.environ.get("PW_NODE_MODULES")
+                   or "/Users/fanshuai/.workbuddy/binaries/node/workspace/node_modules")
 HISTORY_BASE = os.path.join(EDITOR_HOME, ".history")   # 历史快照存这里，不进用户文件夹
 RENDER_BASE = os.path.join(EDITOR_HOME, ".render")     # 渲染/导出产物存这里，不进用户文件夹
 ACTIVE_FILE = None     # 当前打开的 deck 绝对路径（None = 还没打开）
@@ -296,13 +317,16 @@ def render_all_pw(file):
         render_status["total"] = n
         render_status["done"] = 0
         render_status["cancelled"] = False
+    env = dict(os.environ)
+    env["PW_NODE_MODULES"] = PW_NODE_MODULES
     proc = subprocess.Popen(
-        [sys.executable, RENDER_PW, "--out", outdir, file, "1", str(n)],
+        [NODE_BIN, RENDER_PW, "--out", outdir, file, "1", str(n)],
         cwd=ACTIVE_DIR or os.path.dirname(file),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=env,
     )
     with render_lock:
         render_status["_proc"] = proc
@@ -358,6 +382,129 @@ def build_pptx(file):
     out = os.path.join(outdir, base_of(file) + ".pptx")
     prs.save(out)
     return out
+
+
+def _preview_pngs(file):
+    """返回该 deck 已渲染的 preview-P*.png 列表（按页码序）。"""
+    outdir = os.path.join(RENDER_BASE, deck_key(file))
+    n = count_slides(file)
+    pngs = []
+    for i in range(1, n + 1):
+        p = os.path.join(outdir, f"preview-P{i:02d}.png")
+        if os.path.exists(p):
+            pngs.append(p)
+    return pngs
+
+
+def ensure_rendered(file):
+    """保证预览 PNG 已生成（缺则先渲染）。返回 PNG 列表。"""
+    pngs = _preview_pngs(file)
+    if len(pngs) < count_slides(file):
+        render_all_pw(file)
+        pngs = _preview_pngs(file)
+    return pngs
+
+
+def build_pdf(file):
+    """把每页 PNG 合并为 16:9 单 PDF（纯 PIL，本地，无外部依赖）。"""
+    from PIL import Image
+    pngs = ensure_rendered(file)
+    if not pngs:
+        return None
+    outdir = os.path.join(RENDER_BASE, deck_key(file))
+    imgs = [Image.open(p).convert("RGB") for p in pngs]
+    out = os.path.join(outdir, base_of(file) + ".pdf")
+    if len(imgs) == 1:
+        imgs[0].save(out, "PDF", resolution=150.0)
+    else:
+        imgs[0].save(out, "PDF", save_all=True, append_images=imgs[1:], resolution=150.0)
+    return out
+
+
+def build_png_zip(file):
+    """把所有预览 PNG 打包成 zip 供下载。"""
+    pngs = ensure_rendered(file)
+    if not pngs:
+        return None
+    outdir = os.path.join(RENDER_BASE, deck_key(file))
+    out = os.path.join(outdir, base_of(file) + "-pngs.zip")
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in pngs:
+            z.write(p, os.path.basename(p))
+    return out
+
+
+def build_longshot(file):
+    """所有页竖排拼成一张长 PNG（适合长图/分享）。"""
+    from PIL import Image
+    pngs = ensure_rendered(file)
+    if not pngs:
+        return None
+    outdir = os.path.join(RENDER_BASE, deck_key(file))
+    imgs = [Image.open(p).convert("RGB") for p in pngs]
+    w = max(im.width for im in imgs)
+    scaled = []
+    for im in imgs:
+        if im.width != w:
+            im = im.resize((w, int(im.height * w / im.width)))
+        scaled.append(im)
+    total_h = sum(im.height for im in scaled)
+    canvas = Image.new("RGB", (w, total_h), (255, 255, 255))
+    y = 0
+    for im in scaled:
+        canvas.paste(im, (0, y))
+        y += im.height
+    out = os.path.join(outdir, base_of(file) + "-long.png")
+    canvas.save(out, "PNG")
+    return out
+
+
+def run_export_file(file, kind):
+    """通用文件型导出：pdf / png（zip）/ longshot。复用渲染产物，纯本地。"""
+    with render_lock:
+        render_status["running"] = True
+        render_status["error"] = ""
+        render_status["cancelled"] = False
+        render_status["phase"] = "building_" + kind
+        render_status["last"] = ""
+        render_status["pdf_ready"] = False
+        render_status["png_ready"] = False
+        render_status["long_ready"] = False
+        render_status["artifact_name"] = ""
+        render_status["artifact_kind"] = kind
+        render_status["artifact_path"] = ""
+    try:
+        if kind == "pdf":
+            out = build_pdf(file)
+        elif kind == "png":
+            out = build_png_zip(file)
+        elif kind == "longshot":
+            out = build_longshot(file)
+        else:
+            out = None
+        if out and not render_status["cancelled"]:
+            with render_lock:
+                render_status["phase"] = "done_" + kind
+                render_status["artifact_name"] = os.path.basename(out)
+                render_status["artifact_path"] = out
+                if kind == "pdf":
+                    render_status["pdf_ready"] = True
+                elif kind == "png":
+                    render_status["png_ready"] = True
+                elif kind == "longshot":
+                    render_status["long_ready"] = True
+                render_status["last"] = f"已生成（{kind}）"
+        elif render_status["cancelled"]:
+            with render_lock:
+                render_status["phase"] = ""
+    except Exception as e:
+        with render_lock:
+            if not render_status["cancelled"]:
+                render_status["error"] = str(e)
+                render_status["phase"] = "error_" + kind
+    finally:
+        with render_lock:
+            render_status["running"] = False
 
 
 def run_export(file, mode="editable"):
@@ -663,6 +810,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send(200, json.dumps(run_feishu_auth(), ensure_ascii=False))
         elif self.path == "/api/download-pptx":
             self._serve_pptx()
+        elif self.path == "/api/download-file":
+            self._serve_artifact()
         else:
             # fallback: 静态文件（slide 引用的 ./guizang-fde-red/*.png 等配图），仅放行媒体/样式类扩展名
             rel = self.path.lstrip("/").split("?")[0]
@@ -744,6 +893,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             t = threading.Thread(target=run_export, args=(fp, mode), daemon=True)
             t.start()
             self._send(200, json.dumps({"ok": True, "msg": "已启动导出 PPT"}))
+        elif self.path in ("/api/export-pdf", "/api/export-png", "/api/export-longshot"):
+            rel = data.get("file", DEFAULT_FILE)
+            kind = {"/api/export-pdf": "pdf", "/api/export-png": "png",
+                    "/api/export-longshot": "longshot"}[self.path]
+            fp = resolve_file(rel)
+            if not fp:
+                self._send(400, json.dumps({"ok": False, "msg": "非法文件或未打开 deck"}))
+                return
+            if render_status["running"]:
+                self._send(200, json.dumps({"ok": False, "msg": "任务进行中，请稍候"}))
+                return
+            t = threading.Thread(target=run_export_file, args=(fp, kind), daemon=True)
+            t.start()
+            self._send(200, json.dumps({"ok": True, "msg": f"已启动导出（{kind}）"}))
         elif self.path == "/api/rollback":
             rel = data.get("file", DEFAULT_FILE)
             snap = data.get("snap", "")
@@ -803,6 +966,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # HTTP 头只能 latin-1，中文文件名用 RFC 5987 (filename*=UTF-8'') 编码，并附 ASCII 兜底名
         self.send_header("Content-Disposition",
                          f'attachment; filename="fde-pptx.pptx"; filename*=UTF-8\'\'{quote(name)}')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_artifact(self):
+        """通用文件型导出下载：pdf / png(zip) / longshot(png)。
+        直接读取 run_export_file 写入的 render_status['artifact_path']（绝对路径），按扩展名定 Content-Type。
+        """
+        with render_lock:
+            name = render_status.get("artifact_name", "")
+            path = render_status.get("artifact_path", "")
+        if not name or not path:
+            self._send(404, "not ready")
+            return
+        if not os.path.isfile(path):
+            self._send(404, "file missing")
+            return
+        ext = os.path.splitext(name)[1].lower()
+        ctype = {".pdf": "application/pdf", ".zip": "application/zip",
+                 ".png": "image/png"}.get(ext, "application/octet-stream")
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        # HTTP 头只能 latin-1，中文文件名用 RFC 5987 (filename*=UTF-8'') 编码，并附 ASCII 兜底名
+        self.send_header("Content-Disposition",
+                         f'attachment; filename="fde-export{ext}"; filename*=UTF-8\'\'{quote(name)}')
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

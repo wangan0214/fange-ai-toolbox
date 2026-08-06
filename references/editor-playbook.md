@@ -107,7 +107,8 @@
 
 改完 `editor.html` **必须**跑一次 headless 冒烟，确认 **0 JS errors** + 关键能力可用。
 
-- **环境**：managed python 无 playwright → 用 **Node 版 playwright**（`/Users/fanshuai/.workbuddy/binaries/node/workspace/node_modules/playwright`）+ 系统 Chrome（`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`）。
+- **环境**：managed python 无 playwright（且无 pip 网络）→ 渲染器与测试统一走 **Node 版 playwright**（`/Users/fanshuai/.workbuddy/binaries/node/workspace/node_modules/playwright`）+ 系统 Chrome（`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`）。
+- **服务端渲染管线已切到 Node**：`scripts/render_slides_pw.mjs`（替代原 `render_slides_pw.py`）。`editor_server.py` 的 `render_all_pw` 现在 `subprocess` 调 `node render_slides_pw.mjs --out DIR SRC 1 N`，并通过环境变量 `PW_NODE_MODULES` 把 playwright 包路径传给 node（node 用 `createRequire(绝对路径)` 解析，因为 NODE_PATH 对 ESM 不生效）。CLI / 输出契约（`P<num> -> name (bytes)B`、`ALL DONE`）与旧 Python 版完全一致，后端渲染相关功能（PPTX / PDF / PNG 包 / 长图导出）共用它。
 - `require` 用**绝对路径**（NODE_PATH 对 node 不生效）：`const { chromium } = require('/Users/.../node_modules/playwright')`。
 - 语法预检：`node --check`（提取 `<script>` 块）确保无语法错再跑。
 - 测试 deck：最小 2 页含 `.box` 绝对定位元素（`/tmp/t2/index.html`）。
@@ -125,12 +126,13 @@
 - 撤销 / 重做栈（v1.0.19）
 - 视口比例选择（v1.0.15）
 - 历史快照回滚 / 三层可编辑 PPT 导出 / 飞书云空间上传
-- 单会话 Playwright 渲染（无头 Chrome 起一次逐页截图）
+- 单会话 Playwright 渲染（无头 Chrome 起一次逐页截图，已切 Node 版）
+- **PDF / PNG 包 / 长截图导出（纯 PIL 本地合并，无需新依赖）（v1.0.24）**
 
 **⏳ P1 待做**
-- PDF / PNG / 长截图导出
 - AI 协作闭环（批注 / 生成 prompt）
 - SVG / Canvas 编辑
+- **PPTX 导出依赖 `python-pptx`（本机未装且无 pip 网络）—— 当前 PPTX 导出被阻断，需 `pip install python-pptx` 或改写纯 PIL 生成后才能恢复**
 
 ---
 

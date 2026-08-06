@@ -331,6 +331,10 @@
       <div class="m-sep" style="padding:6px 12px 2px;font-size:11px;color:var(--ui-muted);border-top:1px solid var(--ui-line);margin-top:6px;">— 飞书云空间 —</div>
       <button class="btn" id="btn-up-html">上传当前 HTML</button>
       <button class="btn" id="btn-up-pptx">上传导出 PPTX</button>
+      <div class="m-sep" style="padding:6px 12px 2px;font-size:11px;color:var(--ui-muted);border-top:1px solid var(--ui-line);margin-top:6px;">— 导出 / 分享 —</div>
+      <button class="btn" id="btn-export-pdf" title="把所有页合并成一张 16:9 PDF（本地 PIL 生成，矢量清晰，体积小）">📄 导出 PDF</button>
+      <button class="btn" id="btn-export-png" title="把所有页预览 PNG 打包成 zip 下载">🖼 导出 PNG 包</button>
+      <button class="btn" id="btn-export-long" title="所有页竖排拼成一张长图（适合分享 / 长截图）">🧾 导出长图</button>
     </div>
   </div>
   <div id="status">就绪</div>
@@ -1722,6 +1726,50 @@ function pollExport(){
     }
   }).catch(()=>setTimeout(pollExport,2000));
 }
+// 通用文件型导出（PDF / PNG 包 / 长图）：复用 render-status 的 *_ready 标志
+function triggerFileExport(kind, label){
+  fetch("/api/export-"+kind, {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({file: currentFilePath || currentFile})})
+    .then(r=>r.json()).then(j=>{
+      if(j.ok){ $("#p-title").textContent = "导出 "+label; $("#progress").style.display="block"; pollFileExport(kind, label); }
+      else setStatus(j.msg||"导出未启动", "err");
+    }).catch(e=>setStatus("请求失败: "+e.message, "err"));
+}
+function pollFileExport(kind, label){
+  fetch("/api/render-status").then(r=>r.json()).then(s=>{
+    const pct = s.total? Math.round(s.done/s.total*100):0;
+    $("#p-fill").style.width = pct+"%";
+    const readyKey = kind==="pdf"?"pdf_ready":kind==="png"?"png_ready":"long_ready";
+    let txt;
+    if(s.phase && s.phase.indexOf("building_"+kind)===0){ txt = "正在生成 "+label+"…"; }
+    else if(s.running){ txt = `${s.last} · ${pct}%`; }
+    else if(s[readyKey]){ txt = label+" 已生成 ✓ 开始下载"; }
+    else if(s.error && s.phase && s.phase.indexOf("error_"+kind)===0){ txt = "出错: "+s.error; }
+    else if(s.cancelled){ txt = "已停止"; }
+    else { txt = "空闲"; }
+    $("#p-txt").textContent = txt;
+    if(s.running || (s.phase && s.phase.indexOf("building_"+kind)===0)){
+      setTimeout(()=>pollFileExport(kind,label), 1500);
+    } else {
+      $("#prog-cancel").disabled = false; $("#prog-cancel").textContent = "停止渲染";
+      if(s[readyKey]){
+        setStatus(label+" 已生成 ✓", "ok");
+        const a = document.createElement("a");
+        a.href = "/api/download-file";
+        a.download = s.artifact_name || ("export."+ (kind==="png"?"zip":kind==="longshot"?"png":"pdf"));
+        a.click();
+        setTimeout(()=>{ $("#progress").style.display="none"; }, 2500);
+      } else if(s.error && s.phase && s.phase.indexOf("error_"+kind)===0){
+        setStatus(label+" 出错: "+s.error, "err");
+      } else if(s.cancelled){
+        setStatus("已停止", "ok");
+      }
+    }
+  }).catch(()=>setTimeout(()=>pollFileExport(kind,label),2000));
+}
+$("#btn-export-pdf").addEventListener("click", ()=>triggerFileExport("pdf","PDF"));
+$("#btn-export-png").addEventListener("click", ()=>triggerFileExport("png","PNG 包"));
+$("#btn-export-long").addEventListener("click", ()=>triggerFileExport("longshot","长图"));
 $("#btn-reload").addEventListener("click", ()=>{
   if(!confirm("放弃当前所有未保存改动，重新读取？")) return;
   if(currentFilePath){
