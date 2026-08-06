@@ -19,10 +19,10 @@
 ## 快速开始
 
 ```bash
-cd fange-html-deck-editor/scripts
-./start.command            # macOS：启动并自动打开浏览器
-# 或手动：
-python3 editor_server.py --root /path/to/your/decks --port 8731
+# macOS：双击启动器（自动打开浏览器到 http://localhost:8731/）
+双击 帆哥PPT编辑器一键启动.command
+
+# 之后在编辑器里点「打开 PPT…」选任意位置的 deck HTML，原地改字、保存写回原文件
 ```
 
 浏览器打开 http://localhost:8731 即可。
@@ -32,17 +32,19 @@ python3 editor_server.py --root /path/to/your/decks --port 8731
 - Python 3.10+
 - `pip install playwright` 且 `playwright install chromium`
   - macOS 也可直接用系统 Chrome：默认走 `/Applications/Google Chrome.app`
-- 把工具装到任意项目目录：`bash scripts/install.sh`
 
 ## 目录结构
 
-- `scripts/editor_server.py` — 本地 HTTP 服务（load / save / render / export / 历史快照）
+- `帆哥PPT编辑器一键启动.command` — macOS 一键启动器（双击即启动，基于 `__file__` 自动定位，无需 `--root`）
+- `帆哥PPT编辑器-打开Web界面.webloc` — 浏览器快捷方式（双击直接打开 http://localhost:8731/）
+- `scripts/editor_server.py` — 本地 HTTP 服务（open / save / render / export / 历史快照）
 - `scripts/render_slides_pw.py` — Playwright 单会话渲染器
-- `scripts/start.command` — macOS 一键启动器
-- `scripts/install.sh` — 把启动器安装到任意项目目录
+- `scripts/export_editable_pptx.py` — 三层可编辑 PPTX 导出
 - `templates/editor.html` — 编辑器前端（单文件）
 - `references/architecture.md` — 架构与设计说明
 - `SKILL.md` — WorkBuddy skill 元数据
+
+> ⚠️ 历史快照 / 渲染产物 / 日志**全部**存编辑器自家目录（`.history/`、`.render/`、`editor.log`），绝不写入你打开的 deck 所在项目文件夹。
 
 ## 配套 skill 生态
 

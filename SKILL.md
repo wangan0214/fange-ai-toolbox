@@ -36,8 +36,8 @@ outputs:
 
 - 左侧缩略图列表 + 右侧大预览，每页文字/HTML 可在浏览器里直接改、改完保存即落盘
 - **单会话 Playwright** 渲染（无头 Chrome 起一次，逐页截图）→ 比每页启一次的方案快 10x+
-- **历史快照**：每次保存自动留 `.fde_history/<base>/<base>.YYYYMMDDTHHMMSS.ffffff.html`
-  （微秒级时间戳防碰撞），保留最近 60 个；UI 一键回滚，回滚前自动保留当前版本
+- **历史快照**：每次保存自动留 `EDITOR_HOME/.history/<deckKey>/<deckKey>.YYYYMMDDTHHMMSS.ffffff.html`
+  （`deckKey = sha1(绝对路径)[:12]`，微秒级时间戳防碰撞），保留最近 60 个；UI 一键回滚，回滚前自动保留当前版本
 - **导出 PPT**：顶栏下拉选「可编辑版 / 高清整页图」两种模式，服务端用 python-pptx 打包成 16:9 `.pptx`
 - **拖拽排序** / ▲▼ 挪页 / 文件切换 / 拖拽 .html 进编辑器导入
 - **上传飞书云空间**：「更多 ▾」里把当前 HTML 或已导出的 PPTX 一键 `lark-cli drive +upload` 到飞书云空间（链接自动复制并打开），把 `feishu-html-slides` 的飞书交付路径真正落地。**上传前先做授权校验**：未授权/未绑定飞书账号（或缺少 `drive:file:upload` 权限）时，前端弹出引导框提示执行 `lark-cli auth login` 授权后再重试，避免误传失败
@@ -59,56 +59,41 @@ outputs:
 
 ## 快速使用（3 分钟跑起来）
 
-**核心规则：启动器放在哪个 deck 目录，就编辑哪个 deck。** 无需记命令。
+**核心规则：编辑器独立放在 `17-帆哥PPT编辑器/`，打开任意位置的 HTML 幻灯片、原地改字、写回原文件，绝不污染你的项目文件夹。**
 
 ```bash
-# 最推荐：把一键启动脚本复制到「要编辑的 deck 目录」（和 index.html 同级），双击即可
-cp fde_editor/帆哥PPT编辑器一键启动.command ~/Documents/.../EP27-幻灯片/编辑此PPT一键启动.command
-# 双击「编辑此PPT一键启动.command」→ root 自动 = EP27-幻灯片，保存写回原处
+# 1) 双击启动器（macOS）
+双击 17-帆哥PPT编辑器/帆哥PPT编辑器一键启动.command
+#   → 浏览器自动打开 http://localhost:8731/，显示引导页
 
-# 进阶（任选）：
-FDE_ROOT=/path/to/deck  fde_editor/帆哥PPT编辑器一键启动.command   # 环境变量指定 root
-fde_editor/帆哥PPT编辑器一键启动.command /path/to/deck            # 参数指定 root
-# 直接双击 fde_editor/ 里的本文件 → root = 12-FDE研究（编辑 FDE 系列 deck 用，向后兼容）
+# 2) 点「打开 PPT…」→ macOS 原生选文件对话框 → 选任意位置的 deck HTML
+#   → 编辑器自动把工作根切到该文件所在目录（原地编辑，open-in-place）
+
+# 3) 浏览器里改字 / 拖拽排序 → ⌘S 保存 → 直接写回【原文件】，不复制、不移动
 ```
 
 浏览器自动打开 http://localhost:8731/ ，开始改字。
 
-> **v1.0.21 重要修复：一键启动真正「跟随 deck 目录」，且自动切换 root。**
-> 之前的坑：一键启动脚本硬编码 `ROOT=12-FDE研究`，用户想编辑 EP27（在另一个
-> 项目文件夹 `W-自媒体测试/LaiyeWorker调研/EP27-幻灯片`）时，编辑器在那个根下
-> 「看不见也存不对」EP27 → 表现为"改不了"。v1.0.20 曾试图让 root 跟 cwd 走，
-> 但脚本里 `cd "$DIR"` 把 cwd 强制改回脚本目录，导致 cd 方案实际失效、双击永远锁死
-> 12-FDE研究。
->
-> **v1.0.21 根因级修法**：
-> 1. root 判定改为「脚本所在目录是否有 index.html」——放在 deck 目录里就编辑那个 deck；
->    放在 fde_editor/ 里（无 index.html）则兜底 12-FDE研究（向后兼容）。
-> 2. 后端新增 `GET /api/root` 返回当前实例 root；启动器检测：若 8731 已在跑但 root 不对，
->    自动 `pkill` 旧实例并用正确 root 重启（一次双击永远开对地方）。
-> 3. 后台 python 输出重定向到 `<root>/.fde_editor.log`，避免占用终端 / 管道挂死。
->
-> **结论**：编辑 12-FDE研究 里的 deck → 直接双击 fde_editor 里的启动器；编辑 EP27 等
-> 其他项目的 deck → 把启动器复制到该 deck 目录双击（已为 EP27 放好一份）。
-
-> **v1.0.22 架构升级：编辑器彻底独立化 + 原地编辑不污染。**
-> 用户两诉求：① 根目录不再绑死 FDE 项目，改成独立文件夹「帆哥 PPT 编辑器」；
-> ② 编辑其他 PPT 时不能污染用户项目文件夹。
+> **v1.0.22 架构（当前版本）：编辑器彻底独立化 + 原地编辑不污染。**
+> 用户两诉求：① 根目录不再绑死 FDE 项目，改成独立文件夹；② 编辑其他 PPT 时不能污染用户项目文件夹。
 >
 > **根因级修法（open-in-place 模式）**：
-> 1. 编辑器本体独立放在 `~/Documents/帆哥 PPT 编辑器/`，不再依赖任何具体项目的根目录。
-> 2. 后端 `ALLOWED_ROOT` 初始=编辑器自家目录；点「打开 PPT…」（macOS 原生选文件对话框，
->    `/api/pick` → `/api/open`）后，`set_active` 把 `ALLOWED_ROOT` 动态切到**该 deck 所在目录**，
+> 1. 编辑器本体独立放在 `17-帆哥PPT编辑器/`，不再依赖任何具体项目根目录。
+> 2. 点「打开 PPT…」（`/api/pick` → `/api/open`）后，后端把 `ALLOWED_ROOT` 动态切到**该 deck 所在目录**，
 >    之后的保存 / 渲染 / 回滚全部作用于原文件——**不复制、不移动、写回原路径**。
 > 3. 历史快照、渲染产物、日志**全部**存编辑器自家目录（`EDITOR_HOME/.history/<deckKey>/`、
 >    `EDITOR_HOME/.render/<deckKey>/`、`EDITOR_HOME/editor.log`），用 `sha1(abs_path)[:12]` 做命名空间，
 >    不同目录的同名 `index.html` 互不串台；**绝不**在用户项目文件夹里写 `.history` 或副本。
-> 4. 前端改为：启动显示引导页 → 「打开 PPT…」/「最近」下拉 / 拖拽导入。拖拽与「导入副本」因浏览器
->    拿不到原文件绝对路径，保存时改为下载编辑版副本（不回写）；只有「打开 PPT…」才是真正的原地写回。
-> 5. 启动器 `帆哥PPT编辑器一键启动.command` 双击即启动（root 已随 deck 自动切换，无需 cd 方案、无需重启）。
+> 4. 拖拽与「导入副本」因浏览器拿不到原文件绝对路径，保存时改为下载编辑版副本（不回写）；
+>    只有「打开 PPT…」才是真正的原地写回。
+> 5. 启动器基于 `__file__` 自动定位，无需 `--root` / 无需 cd 方案 / 无需重启。
 >
-> **结论**：以后任何 HTML 幻灯片，直接双击「帆哥 PPT 编辑器」启动器 → 打开 PPT… → 改字 → 保存写回原文件，
+> **结论**：以后任何 HTML 幻灯片，双击「帆哥PPT编辑器一键启动.command」→ 打开 PPT… → 改字 → 保存写回原文件，
 > 你的项目目录保持干净。
+>
+> **两个 canonical 副本（保持同步）**：
+> - 工作区：`/Users/fanshuai/Documents/搞钱集中营/17-帆哥PPT编辑器/`（日常编辑/运行）
+> - OB 镜像：`/Users/fanshuai/【工作盘】/7、王帆的知识库/0.【搞钱行动】/17-帆哥PPT编辑器/`（git 仓库，remote = wangan0214/fange-ai-toolbox）
 
 ## 关键设计
 
@@ -133,7 +118,7 @@ fde_editor/帆哥PPT编辑器一键启动.command /path/to/deck            # 参
 ## 触发后做什么
 
 1. 检查工作目录是否有 deck-style HTML（用 `<section class="slide">` 检索）
-2. 启动参数化 `editor_server.py --root <dir>`
+2. 启动 `editor_server.py`（无需 `--root`；打开 PPT 后后端自动把工作根切到该 deck 所在目录）
 3. 自动打开浏览器（或告诉用户打开 http://localhost:8731/）
 4. 用户编辑 → 自动每 10s 写本地草稿（防浏览器关闭丢）→ 用户点保存即落盘 + 留快照
 5. 用户点导出 PPT → 后台渲染 → 打包 → 自动下载

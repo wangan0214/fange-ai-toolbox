@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────┐    启动    ┌────────────────────────────┐
-│ start.command   │ ─────────▶ │ editor_server.py --root X  │
+│ 帆哥PPT编辑器一键启动.command │ ─────────▶ │ editor_server.py (open-in-place) │
 └─────────────────┘            └─────────────┬──────────────┘
                                               │ 127.0.0.1:8731
                                               ▼
@@ -81,21 +81,25 @@ import http.server, socketserver  # 标准库
 
 | 端点 | 方法 | 作用 |
 |---|---|---|
-| `/` | GET | 返回编辑器 HTML |
-| `/api/files` | GET | 列 ALLOWED_ROOT 下所有 .html（过滤隐藏目录 / 渲染残片） |
-| `/api/load?file=` | GET | 读取源文件全文 |
-| `/api/save` | POST | 原子写回（tmp + os.replace） + 自动留历史快照 |
+| `/` | GET | 返回编辑器 HTML（引导页） |
+| `/api/pick?type=file\|folder` | GET | macOS 原生选文件对话框，返回绝对路径 |
+| `/api/open?path=` | GET | 打开 deck：动态切工作根到该文件目录（open-in-place），返回源 HTML |
+| `/api/files` | GET | 列当前 deck 目录下所有 .html（用于同 deck 内切换） |
+| `/api/recent` | GET | 最近打开列表（绝对路径） |
+| `/api/recent-remove` | POST | 从最近列表移除某项 |
+| `/api/save` | POST | `{file:绝对路径, html}` 原子写回原文件（tmp + os.replace）+ 自动留历史快照 |
 | `/api/render` | POST | 后台启动单会话 Playwright 渲染 |
 | `/api/render-status` | GET | 渲染进度（运行中 / 完成 / 取消 / 错误） |
 | `/api/export-pptx` | POST | 渲染 + python-pptx 打包 16:9 .pptx |
 | `/api/download-pptx` | GET | 下载 .pptx |
-| `/api/history?file=` | GET | 列出该文件历史快照 |
+| `/api/history` | GET | 列出当前 deck 历史快照（无 ACTIVE_FILE 返回空） |
 | `/api/history-file?file=&snap=` | GET | 读取某个快照（预览/下载） |
 | `/api/rollback` | POST | 回滚到快照（回滚前自动留当前版快照） |
+| `/api/root` | GET | 返回当前 EDITOR_HOME / ACTIVE_FILE 状态 |
 
 **关键安全/健壮性细节**：
 
-- `safe_abs(rel)`：防 `..` 穿越 + 强制 `.html` 扩展名
+- 所有读写经 `resolve_file()` 路由到 `ACTIVE_FILE`（打开的 deck 绝对路径）；路径校验防 `..` 穿越 + 强制 `.html` 扩展名
 - `safe_snap(snap)`：禁 `/ \ ..` 即可，**允许 UTF-8**（中文快照名能正常回滚）
 - `_qs()`：先 `self.path.encode("latin-1").decode("utf-8")` 还原字节，**同时兼容裸 UTF-8 与百分号编码两种请求**（http.server 默认按 Latin-1 解码路径会污染中文）
 - 路径白名单只允许 `ALLOWED_ROOT` 内
@@ -124,14 +128,16 @@ def main():
 ### 4. 历史快照
 
 ```
-.fde_history/
-  <base>/
-    <base>.20260725T191950696387.html    # 微秒时间戳，同秒多次也唯一
-    <base>.20260725T192012123456.html
+.history/
+  <deckKey>/                       # deckKey = sha1(源文件绝对路径)[:12]
+    <deckKey>.20260725T191950696387.html    # 微秒时间戳，同秒多次也唯一
+    <deckKey>.20260725T192012123456.html
     ...
 ```
 
 - 时间戳格式：`YYYYMMDDTHHMMSS` + 6 位微秒（`"%06d" % (time.time()%1*1e6)`）
+- 命名空间用 `sha1(绝对路径)[:12]`，不同目录的同名 `index.html` 互不串台
+- 历史快照**只存编辑器自家目录**，绝不写入用户项目文件夹
 - 每文件保留最近 60 个，超出删最旧
 - **回滚前**自动 `save_snapshot(rel, current_html)` 留当前版（永可再退）
 
@@ -174,30 +180,18 @@ def main():
 ### 一键（macOS）
 
 ```bash
-# 默认：编辑所在目录的所有 deck
-./scripts/start.command
-
-# 或指定项目目录
-./scripts/start.command ~/decks
+# 双击编辑器目录里的启动器（基于 __file__ 自动定位，无需 --root）
+双击 帆哥PPT编辑器一键启动.command
+# → 浏览器自动打开 http://localhost:8731/，显示引导页
+# → 点「打开 PPT…」选任意位置的 deck HTML，原地编辑、保存写回原文件
 ```
 
 ### 手动
 
 ```bash
-python scripts/editor_server.py \
-  --root /path/to/decks \
-  --port 8731 \
-  --default index.html   # 不传则用 root 下第一个 .html
-```
-
-### 安装到项目
-
-```bash
-# 把 skill 提供的安装脚本丢到目标项目目录里
-cp scripts/install.sh /path/to/your-project/
-cd /path/to/your-project
-./install.sh
-# 会生成 ./启动编辑器.command 和 ./打开编辑器.webloc
+# 启动器本质上就是：用本机 managed python 跑 editor_server.py（默认端口 8731）
+python3 scripts/editor_server.py --port 8731
+# 之后在浏览器里「打开 PPT…」选择要编辑的 deck，无需 --root
 ```
 
 ## 已知约束
