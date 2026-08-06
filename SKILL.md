@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.22
+version: 1.0.23
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -109,6 +109,12 @@ outputs:
 | **拖拽 + 文件选择器双导入** | 顶栏「打开文件」按钮 + 整个编辑区可拖入 .html |
 | **UI 变量 `--ui-*` 前缀** | 与幻灯片预览注入的 `--panel/--line/--muted` 完全隔离，杜绝样式串台 |
 
+## ⚠️ 编辑前必读（开发铁律手册 · hands-off）
+
+> 任何改动 `templates/editor.html` / `scripts/` / 导出脚本前，**先读 `references/editor-playbook.md`**。
+> 那里是规则优先的沉淀：坐标系 / CSS 注入 / 正则 / 跨文件重置 / open-in-place / 路由 / UI 字色 /
+> resize handle / 代码视图 / **Playwright 真机冒烟测试法（防改崩）**。照手册即可直接动手，无需重新推导。
+
 ## 触发词
 
 - "用 HTML 幻灯片编辑器" / "跑个 deck 编辑器" / "改这个 PPT 的字"
@@ -133,6 +139,24 @@ outputs:
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.23（2026-08-06）P0：拖拽缩放 handle + 代码视图兜底 + Playwright 真机测试法
+
+**动机**：竞品研究（ClickDeck/NextPPT）指出"不能拖拽缩放、改不动时无逃生舱"是本地编辑器的硬伤；用户也要求"所见即所得 + 拖拽缩放"。本版补齐 P0 两块能力，并把测试方法沉淀为手册。
+
+**拖拽缩放 handle（§9 手册）**：
+- 8 向手柄 `.rh`(n/s/e/w/ne/nw/se/sw) + `.sel-box` 挂在 `.slide-frame`（**显示像素空间，不随 `.slide` transform 二次缩放**）。
+- 写回：`startResize` 记 `srcBox = pickedEl.getBoundingClientRect()`（element.style 是源像素）+ `sc`；`onResizeMove` 中 `dx/dy = mouseΔ / sc`，按 `dir` 改 `w/h/left/top`，MIN=8 源像素；同步面板数字；`onResizeUp` 后 `styleDirty + pushHistory`。
+- 选中 `pickEl` 渲染手柄；取消选中 / `exitStyleMode` 调 `clearResizeLayer()`；拖拽时 `onDragMove` 末尾 `positionResizeLayer()` 同步。
+
+**代码视图兜底（§10 手册）**：
+- `#code-modal` 编辑整体 deck 源：`openCodeView` 用 `buildHtml()` 导出当前态；`#code-apply` 用 `DOMParser.parseFromString` + `buildEditor(parsedDoc)` 整体重解析重渲染。`styleModeClick` 加 `if(e.target.closest(".resize-layer")) return;` 防手柄误吞点击。
+
+**Playwright 真机冒烟测试（§12 手册，防改崩必做）**：
+- managed python 无 playwright → 用 Node 版 playwright + 系统 Chrome；`require` 用绝对路径；脚本断言链：进样式模式→pickEl→8 手柄存在→e 手柄右移 80px→宽度 `200→200+80/0.75`→代码视图含 slide 源→保存写回→0 JS errors。
+- **实测基线**：`styleModeOn=true, picked=true, handles.count=8, width 200→306.667px, code modal 打开含 slide 源, save 写回原文件, errors=[]`。
+
+**沉淀**：本版把全部编辑器铁律/架构/测试方法写入 `references/editor-playbook.md`（规则优先、hands-off），三副本（工作区/OB/skill）与 SKILL.md 引用保持一致。
 
 ### v1.0.19（2026-08-01）撤销/重做栈 + 修样式模式自动放大
 - **撤销栈（用户强需求："所有改动都应该有撤回的能力"）**：顶栏新增「↶ 撤销 / ↷ 重做」按钮 + ⌘Z / ⌘⇧Z（及 Ctrl+Y）快捷键，全局接管，覆盖**文字编辑、画布拖拽、属性面板、重置 inline style、设为 absolute、页面顺序重排**全部改动类型。
