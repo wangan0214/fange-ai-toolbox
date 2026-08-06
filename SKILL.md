@@ -1,6 +1,6 @@
 ---
 name: fange-html-deck-editor
-version: 1.0.24
+version: 1.0.25
 description: |
   本地 HTML 幻灯片（deck）可视化编辑器：浏览器改字直接落盘 + 单会话 Playwright
   渲染 + 历史快照回滚 + 三层可编辑 PPT 导出 + 一键上传飞书云空间。适用于任何
@@ -139,6 +139,20 @@ outputs:
 - **可串联**：`fange-koubo-script` 出逐字稿 → 手工/脚本转 deck HTML → 本 skill 编辑 → 导出 PPT / 上传飞书
 
 ## 迭代记录
+
+### v1.0.25（2026-08-06）P1：PPTX 导出解锁（可编辑三层 + 图片模式，本地离线）
+
+**动机**：用户追问"本机没装 playwright？不是装了吗"并明确"本地优先、不行再联网"。核查发现：编辑器运行时（托管 python 3.13.12）确实无 Python 版 playwright（其他项目 venv / Node 版里有，但不在编辑器运行时）；且之前"无 pip 网络"是代理瞬时抽风的误判——PyPI 443 实际可达。真正阻断 PPTX 的是 `python-pptx`（两个导出函数都依赖它建容器）。
+
+**解法（本地优先）**：建专用 venv `/Users/fanshuai/.workbuddy/binaries/python/envs/fange-editor`（基于托管 python 3.13.12），一次性 `pip install python-pptx playwright`（playwright 仅用系统 Chrome 启动，无需下载浏览器）。`export_editable_pptx.py` 已有高质量 `build_editable_pptx`（三层：干净背景图 + 可改色块 + 可改文本框）与 `build_image_pptx`（整页高清图），无需改代码，装好依赖即全部可用。一键启动脚本改为**优先选该 venv**（再回退 .venv / 托管 python / 系统 python3），PIL 校验保留。
+
+**验证（真实 25 页 FDE deck）**：
+- 函数级：可编辑 285KB / 25 页 / 456 形状 / 366 可改字文本框；图片 5.45MB / 25 页整页图。
+- 服务器级冒烟（venv python 起服务，走完整 API）：editable 285KB、image 5.38MB，均 25 页，✅。
+
+**结论**：PPTX 导出已本地离线解锁，且可编辑三层 PPTX 正是我们对标 Gamma（PPTX fidelity 差，TrustPilot 2.0/5）的核心楔形。联网方案作为兜底（venv 缺失时按钮提示 `pip install python-pptx playwright`）目前不需要。
+
+**沉淀**：playbook §11 环境分层改写（Node 渲染 / venv 跑 PPTX / pip 实际可用）+ §13 PPTX 阻断项改为已解锁；本记录替代 v1.0.24 中"PPTX 阻断"旧结论。
 
 ### v1.0.24（2026-08-06）P1：PDF / PNG 包 / 长截图导出 + 渲染管线切 Node-Playwright
 

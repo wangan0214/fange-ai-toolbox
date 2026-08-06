@@ -6,9 +6,13 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 PORT=8731
 
-# 选 python：优先本目录 venv，其次托管的 python（自带 PIL + 已验证运行环境），否则系统 python3
+# 选 python：优先编辑器专用 venv（含 PIL + python-pptx + playwright，PPTX 导出依赖），
+# 其次本目录 .venv，其次托管的 python（自带 PIL），否则系统 python3
 MPY="/Users/fanshuai/.workbuddy/binaries/python/versions/3.13.12/bin/python3"
-if [ -x "$DIR/.venv/bin/python3" ]; then
+VENV="/Users/fanshuai/.workbuddy/binaries/python/envs/fange-editor"
+if [ -x "$VENV/bin/python3" ]; then
+  PY="$VENV/bin/python3"
+elif [ -x "$DIR/.venv/bin/python3" ]; then
   PY="$DIR/.venv/bin/python3"
 elif [ -x "$MPY" ]; then
   PY="$MPY"
