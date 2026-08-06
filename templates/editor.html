@@ -268,6 +268,20 @@
     padding:8px 16px;border-radius:8px;font-size:13px;z-index:60;box-shadow:0 6px 20px rgba(0,0,0,.4);
     animation:tip-fade 4s ease forwards;pointer-events:none;}
   @keyframes tip-fade{0%{opacity:0;transform:translate(-50%,-10px);}10%,85%{opacity:1;transform:translate(-50%,0);}100%{opacity:0;transform:translate(-50%,-10px);}}
+
+  /* 缩放手柄层：挂在 .slide-frame（显示像素空间，不随 .slide 的 transform:scale 二次缩放） */
+  .resize-layer{position:absolute;inset:0;pointer-events:none;z-index:55;}
+  .resize-layer .sel-box{position:absolute;border:1.5px solid var(--red);pointer-events:none;box-sizing:border-box;}
+  .resize-layer .rh{position:absolute;width:12px;height:12px;background:#fff;border:2px solid var(--red);
+    border-radius:3px;pointer-events:auto;transform:translate(-50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,.45);box-sizing:border-box;}
+  .resize-layer .rh.n{top:0;left:50%;cursor:n-resize;}
+  .resize-layer .rh.s{top:100%;left:50%;cursor:s-resize;}
+  .resize-layer .rh.e{top:50%;left:100%;cursor:e-resize;}
+  .resize-layer .rh.w{top:50%;left:0;cursor:w-resize;}
+  .resize-layer .rh.ne{top:0;left:100%;cursor:ne-resize;}
+  .resize-layer .rh.nw{top:0;left:0;cursor:nw-resize;}
+  .resize-layer .rh.se{top:100%;left:100%;cursor:se-resize;}
+  .resize-layer .rh.sw{top:100%;left:0;cursor:sw-resize;}
 </style>
 <!-- 源文件样式（由 JS 注入，仅用于编辑器内预览，不写回文件） -->
 <style id="orig-css"></style>
@@ -310,6 +324,7 @@
       <button class="btn" id="btn-render">仅重新渲染</button>
       <button class="btn" id="btn-zoom">放大编辑当前页</button>
       <button class="btn" id="btn-style-mode" title="样式模式：点选元素改位置/尺寸/transform（不破坏文字编辑）">📐 样式模式</button>
+      <button class="btn" id="btn-code" title="代码视图：直接编辑 HTML 源码（可视化改不动时的兜底逃生舱）">💻 代码视图</button>
       <button class="btn" id="btn-export">导出 HTML</button>
       <button class="btn" id="btn-history">历史</button>
       <button class="btn" id="btn-reload">放弃改动重读</button>
@@ -392,6 +407,21 @@
     </div>
   </div>
 </div>
+<!-- 代码视图（兜底逃生舱）：编辑当前 deck 完整 HTML 源，应用后整体重解析 -->
+<div id="code-modal" style="display:none;position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.66);backdrop-filter:blur(2px);">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(900px,94vw);height:min(78vh,820px);display:flex;flex-direction:column;background:var(--ui-panel);border:1px solid var(--ui-line);border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6);">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--ui-line);">
+      <h3 style="margin:0;font-size:15px;color:var(--ui-text);">💻 代码视图</h3>
+      <span style="font-size:12px;color:var(--ui-muted);">直接改 HTML 源码（可视化改不动时的兜底）；应用后整体重解析，未保存前可取消</span>
+      <div style="flex:1;"></div>
+      <button class="btn ghost" id="code-cancel" style="padding:6px 12px;">取消</button>
+      <button class="btn primary" id="code-apply">应用改动</button>
+    </div>
+    <textarea id="code-area" spellcheck="false" style="flex:1;width:100%;border:0;outline:0;resize:none;padding:14px;background:#0b0b0e;color:#d6e0ff;font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.55;"></textarea>
+    <div id="code-msg" style="padding:8px 16px;font-size:12px;color:var(--ui-muted);border-top:1px solid var(--ui-line);min-height:18px;"></div>
+  </div>
+</div>
+
 <script>
 const LS_KEY = "fde_editor_draft_v1";
 let currentFile = "";            // 当前编辑的文件名（basename）
@@ -1298,7 +1328,12 @@ function renderStylePanel(){
 function pickEl(el){
   if(pickedEl) pickedEl.classList.remove("__picked");
   pickedEl = el;
-  if(pickedEl) pickedEl.classList.add("__picked");
+  if(pickedEl){
+    pickedEl.classList.add("__picked");
+    renderResizeHandles();
+  } else {
+    clearResizeLayer();
+  }
   renderStylePanel();
   openStylePanel();
 }
@@ -1317,6 +1352,7 @@ function exitStyleMode(){
   styleMode = false;
   document.body.classList.remove("style-mode");
   closeStylePanel();
+  clearResizeLayer();
   $("#editor").removeEventListener("click", styleModeClick, true);
   setStatus("样式模式已退出", "ok");
 }
@@ -1324,6 +1360,7 @@ function styleModeClick(e){
   if(!styleMode) return;
   // 点 #editor 空白处 → 取消选中（但点 .slide-frame 自身不算）
   if(e.target.closest("#style-panel")) return;     // 面板内不拦截
+  if(e.target.closest(".resize-layer")) return;    // 缩放手柄层不拦截（手柄自己处理）
   if(!e.target.closest(".slide")){
     // 点画布外（编辑器滚动区空白）→ 取消选中
     if(pickedEl) pickEl(null);
@@ -1483,6 +1520,7 @@ function onDragMove(e){
   const pl=$("#sp-left"), pt=$("#sp-top");
   if(pl) pl.value = Math.round(newLeft + drag.offOriginX);
   if(pt) pt.value = Math.round(newTop  + drag.offOriginY);
+  positionResizeLayer();   // 拖拽时同步缩放手柄位置
 }
 
 function onDragUp(){
@@ -1507,6 +1545,122 @@ $("#btn-style-mode").addEventListener("click", ()=>{
   else enterStyleMode();
 });
 $("#sp-close").addEventListener("click", ()=>{ closeStylePanel(); });
+
+// ===================== 缩放手柄（拖拽缩放 resize handle） =====================
+// 手柄挂在 .slide-frame（显示像素空间，不随 .slide 的 transform:scale 二次缩放），
+// 写回用 element.style.width/height（源像素，不受 transform 影响）。缩放与拖拽共用源像素坐标系。
+let resizeLayer = null;
+let resize = null;
+function clearResizeLayer(){
+  if(resizeLayer && resizeLayer.parentNode) resizeLayer.parentNode.removeChild(resizeLayer);
+  resizeLayer = null;
+}
+function renderResizeHandles(){
+  if(!pickedEl || !styleMode){ clearResizeLayer(); return; }
+  const frame = pickedEl.closest(".slide-frame");
+  if(!frame) return;
+  if(!resizeLayer || resizeLayer._frame !== frame){
+    clearResizeLayer();
+    resizeLayer = document.createElement("div");
+    resizeLayer.className = "resize-layer";
+    resizeLayer._frame = frame;
+    const sel = document.createElement("div"); sel.className = "sel-box"; resizeLayer.appendChild(sel);
+    ["n","s","e","w","ne","nw","se","sw"].forEach(d=>{
+      const h = document.createElement("div");
+      h.className = "rh " + d; h.dataset.dir = d;
+      h.addEventListener("mousedown", (e)=> startResize(e, d));
+      resizeLayer.appendChild(h);
+    });
+    frame.appendChild(resizeLayer);
+  }
+  positionResizeLayer();
+}
+function positionResizeLayer(){
+  if(!resizeLayer || !pickedEl) return;
+  const fr = resizeLayer._frame.getBoundingClientRect();
+  const r = pickedEl.getBoundingClientRect();
+  const left = r.left - fr.left, top = r.top - fr.top, w = r.width, h = r.height;
+  const sel = resizeLayer.querySelector(".sel-box");
+  sel.style.left = left + "px"; sel.style.top = top + "px";
+  sel.style.width = w + "px"; sel.style.height = h + "px";
+  const set = (cls,x,y)=>{ const el = resizeLayer.querySelector(".rh."+cls); if(el){ el.style.left = x+"px"; el.style.top = y+"px"; } };
+  set("n", left+w/2, top); set("s", left+w/2, top+h);
+  set("e", left+w, top+h/2); set("w", left, top+h/2);
+  set("ne", left+w, top); set("nw", left, top);
+  set("se", left+w, top+h); set("sw", left, top+h);
+}
+function startResize(e, dir){
+  e.preventDefault(); e.stopPropagation();
+  if(!pickedEl) return;
+  const slide = pickedEl.closest(".slide");
+  const sc = slideScale(slide);
+  ensureAbsolute(pickedEl);            // 非 absolute 先转（保视觉位置），缩放才有基准
+  const b = srcBox(pickedEl, slide, sc);
+  resize = { el:pickedEl, slide, sc, dir,
+    startMouseX:e.clientX, startMouseY:e.clientY,
+    startLeft:b.left, startTop:b.top, startW:b.width, startH:b.height };
+  window.addEventListener("mousemove", onResizeMove);
+  window.addEventListener("mouseup", onResizeUp);
+}
+function onResizeMove(e){
+  if(!resize) return;
+  const dx = (e.clientX - resize.startMouseX) / resize.sc;
+  const dy = (e.clientY - resize.startMouseY) / resize.sc;
+  let left = resize.startLeft, top = resize.startTop, w = resize.startW, h = resize.startH;
+  const d = resize.dir;
+  if(d.indexOf("e") >= 0) w = resize.startW + dx;
+  if(d.indexOf("w") >= 0){ w = resize.startW - dx; left = resize.startLeft + dx; }
+  if(d.indexOf("s") >= 0) h = resize.startH + dy;
+  if(d.indexOf("n") >= 0){ h = resize.startH - dy; top = resize.startTop + dy; }
+  const MIN = 8;   // 最小 8 源像素，避免缩没
+  if(w < MIN){ if(d.indexOf("w") >= 0) left = resize.startLeft + resize.startW - MIN; w = MIN; }
+  if(h < MIN){ if(d.indexOf("n") >= 0) top = resize.startTop + resize.startH - MIN; h = MIN; }
+  resize.el.style.width = w + "px"; resize.el.style.height = h + "px";
+  resize.el.style.left = left + "px"; resize.el.style.top = top + "px";
+  positionResizeLayer();
+  const pw=$("#sp-width"), ph=$("#sp-height"), pl=$("#sp-left"), pt=$("#sp-top");
+  if(pw) pw.value = Math.round(w); if(ph) ph.value = Math.round(h);
+  if(pl) pl.value = Math.round(left); if(pt) pt.value = Math.round(top);
+}
+function onResizeUp(){
+  if(!resize) return;
+  window.removeEventListener("mousemove", onResizeMove);
+  window.removeEventListener("mouseup", onResizeUp);
+  styleDirty = true;
+  setStatus("已缩放元素（未保存，⌘S 保存）", "ok");
+  renderStylePanel();
+  pushHistory();
+  resize = null;
+}
+
+// ===================== 代码视图（兜底逃生舱） =====================
+// 编辑当前 deck 的「整体 HTML 源」（含已做可视化改动，由 buildHtml 现态导出），
+// 应用后整体重解析（复用 buildEditor），可视化改不动时直接 patch 源码。
+function openCodeView(){
+  if(!RAW && !currentFilePath){ setStatus("尚未打开 deck", "err"); return; }
+  $("#code-area").value = buildHtml();
+  $("#code-msg").textContent = "当前为整体 HTML 源（含已做的可视化改动）。改完点「应用改动」整体重解析；未保存前取消不生效。";
+  $("#code-modal").style.display = "flex";
+}
+function closeCodeView(){ $("#code-modal").style.display = "none"; }
+$("#btn-code").addEventListener("click", openCodeView);
+$("#code-cancel").addEventListener("click", closeCodeView);
+$("#code-apply").addEventListener("click", ()=>{
+  const text = $("#code-area").value;
+  try{
+    RAW = text;
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    buildEditor(doc);
+    dirty = true;
+    closeCodeView();
+    setStatus("已应用代码改动（未保存，⌘S 写回）", "ok");
+    pushHistory();
+  }catch(e){
+    $("#code-msg").textContent = "解析失败：" + e.message;
+    setStatus("代码视图解析失败", "err");
+  }
+});
+$("#code-modal").addEventListener("click", (e)=>{ if(e.target.id === "code-modal") closeCodeView(); });
 
 // Esc 退出样式模式 / 取消选中
 document.addEventListener("keydown", (e)=>{
